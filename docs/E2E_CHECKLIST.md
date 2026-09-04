@@ -13,7 +13,7 @@ The external validation report recorded:
 - `thoughtsTokenCount` confirmed in real responses
 - Missing `thoughtSignature` was identified as the cause of the second-turn tool-call failure
 
-The remaining external work was blocked by a network change that made direct access to `generativelanguage.googleapis.com:443` time out.
+The remaining external work was blocked by a network change that made direct access to the public Gemini API time out.
 
 ## Final local acceptance
 
@@ -26,8 +26,8 @@ powershell -ExecutionPolicy Bypass -File .\scripts\proxy_start.ps1
 2. Confirm the proxy is alive:
 
 ```powershell
-curl.exe http://127.0.0.1:8765/health
-curl.exe http://127.0.0.1:8765/v1/models
+curl.exe http://localhost:8765/health
+curl.exe http://localhost:8765/v1/models
 ```
 
 3. Add `codex_gemini_profile.toml.example` to `%USERPROFILE%\.codex\config.toml` without removing the existing DeepSeek configuration.
