@@ -91,6 +91,43 @@ def test_http_responses_keeps_deepseek_body_unmodified(monkeypatch):
     assert gemini.requests == []
 
 
+def test_http_responses_routes_compaction_trigger_as_v2_control_signal(monkeypatch):
+    gemini = FakeProvider()
+    deepseek = FakeProvider()
+    monkeypatch.setattr(server_module, "_GEMINI_PROVIDER", gemini)
+    monkeypatch.setattr(server_module, "_DEEPSEEK_PROVIDER", deepseek)
+
+    captured = {}
+
+    def fake_compact_v2(self, data, requested_model):
+        captured["data"] = data
+        captured["model"] = requested_model
+
+    monkeypatch.setattr(ProxyRequestHandler, "_handle_compact_v2", fake_compact_v2)
+
+    status, body = _request(
+        "POST",
+        "/v1/responses",
+        {
+            "model": "gemini-3.8-flash",
+            "stream": True,
+            "input": [
+                {"type": "message", "role": "user", "content": "keep this context"},
+                {"type": "compaction_trigger"},
+            ],
+        },
+    )
+
+    assert status == 200
+    assert body is None
+    assert captured["model"] == "gemini-3.8-flash"
+    assert captured["data"]["messages"] == [
+        {"role": "user", "content": "keep this context"}
+    ]
+    assert gemini.requests == []
+    assert deepseek.requests == []
+
+
 def test_health_and_models_endpoints_expose_configured_models():
     status, health = _request("GET", "/health")
     assert status == 200
