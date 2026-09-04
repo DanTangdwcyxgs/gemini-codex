@@ -1,0 +1,7 @@
+# Copy this file to %USERPROFILE%\.codex\gemini.config.toml
+# The provider block itself belongs in %USERPROFILE%\.codex\config.toml.
+
+model = "gemini-3.8-flash"
+model_provider = "gemini-proxy"
+preferred_auth_method = "apikey"
+forced_login_method = "api"
