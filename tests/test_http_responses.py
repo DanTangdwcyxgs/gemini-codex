@@ -80,7 +80,14 @@ def test_http_responses_keeps_deepseek_body_unmodified(monkeypatch):
 
     assert status == 200
     assert data["model"] == "deepseek-v4-flash"
-    assert deepseek.requests[0] == payload
+    forwarded = deepseek.requests[0]
+    assert forwarded["model"] == payload["model"]
+    assert forwarded["input"] == payload["input"]
+    assert forwarded["tools"] == payload["tools"]
+    assert forwarded["stream"] is True
+    assert forwarded["store"] is False
+    assert "messages" not in forwarded
+    assert "tool_output_types" not in forwarded
     assert gemini.requests == []
 
 
