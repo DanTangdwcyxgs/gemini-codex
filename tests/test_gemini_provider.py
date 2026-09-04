@@ -72,3 +72,39 @@ def test_gemini_38_request_uses_thinking_level_and_api_header(monkeypatch):
     assert "temperature" not in body["generationConfig"]
     assert "topP" not in body["generationConfig"]
     assert "topK" not in body["generationConfig"]
+
+
+def test_gemini_accepts_current_flat_responses_function_tool(monkeypatch):
+    monkeypatch.setattr(config, "gemini_api_key", "test-key")
+    provider = GeminiProvider()
+    session = DummySession()
+    provider.session = session
+    handler = DummyHandler()
+
+    provider.handle_request(
+        {
+            "model": "gemini-3.8-flash",
+            "messages": [{"role": "user", "content": "hello"}],
+            "tools": [
+                {
+                    "type": "function",
+                    "name": "read_file",
+                    "description": "Read a text file.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"path": {"type": "string"}},
+                        "required": ["path"],
+                        "additionalProperties": False,
+                    },
+                }
+            ],
+        },
+        handler,
+    )
+
+    body = json.loads(session.body)
+    declaration = body["tools"][0]["functionDeclarations"][0]
+    assert declaration["name"] == "read_file"
+    assert declaration["description"] == "Read a text file."
+    assert declaration["parameters"]["properties"]["path"]["type"] == "string"
+    assert "additionalProperties" not in declaration["parameters"]
