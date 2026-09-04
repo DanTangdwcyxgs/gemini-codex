@@ -102,10 +102,7 @@ def _builtin_parameters(tool: dict[str, Any], name: str) -> dict[str, Any]:
     if name == "write_file":
         return {
             "type": "object",
-            "properties": {
-                "file_path": {"type": "string"},
-                "changes": {"type": "array"},
-            },
+            "properties": {"file_path": {"type": "string"}, "changes": {"type": "array"}},
             "required": ["file_path"],
         }
     if name == "apply_patch":
@@ -137,18 +134,15 @@ def normalize_tools(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if tool.get("type") in ("function", None):
             result.append(fn)
             continue
-        result.append(
-            {
-                "name": name,
-                "description": fn.get("description") or tool.get("description") or name,
-                "parameters": _builtin_parameters(tool, name),
-            }
-        )
+        result.append({
+            "name": name,
+            "description": fn.get("description") or tool.get("description") or name,
+            "parameters": _builtin_parameters(tool, name),
+        })
     return result
 
 
 def tool_output_types(tools: list[dict[str, Any]]) -> dict[str, str]:
-    """Record which Responses item type Codex expects for built-in tools."""
     result: dict[str, str] = {}
     for tool in tools or []:
         name = _tool_name(tool)
@@ -193,11 +187,7 @@ def _tool_call(item: dict[str, Any]) -> tuple[str, str, Any, str | None]:
         if not isinstance(action, dict):
             action = {}
         if typ == "shell_call":
-            args = {
-                "commands": action.get("commands", []),
-                "max_output_length": action.get("max_output_length"),
-                "timeout_ms": action.get("timeout_ms"),
-            }
+            args = {"commands": action.get("commands", []), "max_output_length": action.get("max_output_length"), "timeout_ms": action.get("timeout_ms")}
         else:
             exec_data = action.get("exec")
             if not isinstance(exec_data, dict):
@@ -215,10 +205,7 @@ def _tool_call(item: dict[str, Any]) -> tuple[str, str, Any, str | None]:
             args = item.get("operation") or {}
         else:
             changes = item.get("changes") or []
-            args = {
-                "file_path": item.get("file_path") or (changes[0].get("path", "") if changes else ""),
-                "changes": changes,
-            }
+            args = {"file_path": item.get("file_path") or (changes[0].get("path", "") if changes else ""), "changes": changes}
     elif not args and typ == "web_search_call":
         args = item.get("action") or {}
 
@@ -226,7 +213,6 @@ def _tool_call(item: dict[str, Any]) -> tuple[str, str, Any, str | None]:
 
 
 def normalize_responses_request(data: dict[str, Any]) -> dict[str, Any]:
-    """Convert OpenAI Responses input items into Gemini-oriented messages."""
     messages: list[dict[str, Any]] = []
     function_names: dict[str, str] = {}
     function_signatures: dict[str, str] = {}
@@ -244,6 +230,11 @@ def normalize_responses_request(data: dict[str, Any]) -> dict[str, Any]:
             continue
 
         typ = item.get("type")
+
+        # Control-only marker: Codex uses this to request/record a compaction boundary;
+        # it is not conversational content and Gemini must not receive it as a message.
+        if typ == "compaction_trigger":
+            continue
 
         if typ in ("compaction", "compaction_summary", "context_compaction"):
             summary = decode_proxy_compaction(item.get("encrypted_content"))
@@ -283,7 +274,7 @@ def normalize_responses_request(data: dict[str, Any]) -> dict[str, Any]:
             reasoning += str(item.get("reasoning_content") or "")
             sig = _signature(item)
             if role in ("assistant", "model"):
-                msg: dict[str, Any] = {"role": "assistant", "content": text}
+                msg = {"role": "assistant", "content": text}
                 if reasoning:
                     msg["reasoning_content"] = reasoning
                 if sig:
@@ -295,14 +286,8 @@ def normalize_responses_request(data: dict[str, Any]) -> dict[str, Any]:
             continue
 
         if typ in (
-            "function_call",
-            "custom_tool_call",
-            "commandExecution",
-            "local_shell_call",
-            "shell_call",
-            "fileChange",
-            "apply_patch_call",
-            "web_search_call",
+            "function_call", "custom_tool_call", "commandExecution", "local_shell_call",
+            "shell_call", "fileChange", "apply_patch_call", "web_search_call",
         ):
             call_id, name, args, sig = _tool_call(item)
             if call_id:
@@ -316,14 +301,9 @@ def normalize_responses_request(data: dict[str, Any]) -> dict[str, Any]:
             continue
 
         if typ in (
-            "function_call_output",
-            "custom_tool_call_output",
-            "commandExecutionOutput",
-            "local_shell_call_output",
-            "shell_call_output",
-            "fileChangeOutput",
-            "apply_patch_call_output",
-            "tool",
+            "function_call_output", "custom_tool_call_output", "commandExecutionOutput",
+            "local_shell_call_output", "shell_call_output", "fileChangeOutput",
+            "apply_patch_call_output", "tool",
         ):
             call_id = item.get("call_id") or item.get("id") or ""
             name = item.get("name") or function_names.get(call_id, "tool")
@@ -332,15 +312,13 @@ def normalize_responses_request(data: dict[str, Any]) -> dict[str, Any]:
                 output = item.get("stderr", "")
             if isinstance(output, (dict, list)):
                 output = json.dumps(output, ensure_ascii=False)
-            messages.append(
-                {
-                    "role": "tool",
-                    "tool_call_id": call_id,
-                    "name": name,
-                    "thought_signature": function_signatures.get(call_id),
-                    "content": str(output or ""),
-                }
-            )
+            messages.append({
+                "role": "tool",
+                "tool_call_id": call_id,
+                "name": name,
+                "thought_signature": function_signatures.get(call_id),
+                "content": str(output or ""),
+            })
 
     result = dict(data)
     result["messages"] = messages
