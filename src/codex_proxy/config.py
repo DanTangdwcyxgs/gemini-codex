@@ -41,6 +41,9 @@ class Config:
             )
         )
     )
+    compaction_model: str = field(
+        default_factory=lambda: os.getenv("CODEX_PROXY_COMPACTION_MODEL", "gemini-3.8-flash")
+    )
 
     model_prefixes: dict[str, str] = field(
         default_factory=lambda: {
