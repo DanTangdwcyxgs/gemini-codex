@@ -6,10 +6,22 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from .config import config
 from .exceptions import ProxyError
 from .normalizer import normalize_responses_request
+from .providers.deepseek import DeepSeekProvider
 from .providers.gemini import GeminiProvider
 
 
-_PROVIDER = GeminiProvider()
+_GEMINI_PROVIDER = GeminiProvider()
+_DEEPSEEK_PROVIDER = DeepSeekProvider()
+
+
+def provider_for_model(model: str):
+    for prefix, provider_key in config.model_prefixes.items():
+        if model.startswith(prefix):
+            if provider_key == "deepseek":
+                return _DEEPSEEK_PROVIDER
+            if provider_key == "gemini":
+                return _GEMINI_PROVIDER
+    raise ProxyError(f"Unsupported model provider for '{model}'. Use a deepseek-* or gemini-* model.")
 
 
 class ProxyRequestHandler(BaseHTTPRequestHandler):
@@ -18,13 +30,21 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
             payload = {"status": "ok", "models": config.models}
             self._json(200, payload)
             return
-        if self.path == "/v1/models" or self.path == "/models":
+        if self.path in ("/v1/models", "/models"):
+            providers = {
+                "deepseek": "deepseek",
+                "gemini": "google",
+            }
             self._json(
                 200,
                 {
                     "object": "list",
                     "data": [
-                        {"id": model, "object": "model", "owned_by": "google"}
+                        {
+                            "id": model,
+                            "object": "model",
+                            "owned_by": providers.get(model.split("-", 1)[0], "proxy"),
+                        }
                         for model in config.models
                     ],
                 },
@@ -47,27 +67,39 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
                 raise ValueError("empty request body")
             raw = self.rfile.read(length)
             data = json.loads(raw)
-            normalized = normalize_responses_request(data)
+            model = data.get("model") or config.models[0]
+
             if self.path.endswith("/compact"):
+                if not model.startswith("gemini-"):
+                    raise ProxyError("Compaction is currently implemented for Gemini models only.")
+                normalized = normalize_responses_request(data)
                 self._handle_compact(normalized)
+                return
+
+            provider = provider_for_model(model)
+            if isinstance(provider, DeepSeekProvider):
+                # DeepSeek implements the Responses API natively, so preserve the original
+                # request instead of rewriting it through the Gemini-oriented normalizer.
+                data = dict(data)
+                data["model"] = model
+                provider.handle_request(data, self)
             else:
-                _PROVIDER.handle_request(normalized, self)
+                normalized = normalize_responses_request(data)
+                normalized["model"] = model
+                provider.handle_request(normalized, self)
         except ProxyError as exc:
             self._json(502, {"error": {"message": str(exc), "type": "proxy_error"}})
         except Exception as exc:
             self._json(400, {"error": {"message": str(exc), "type": "invalid_request_error"}})
 
     def _handle_compact(self, data: dict) -> None:
-        """Return a Responses-compatible compaction item using Gemini text output."""
         summary_request = dict(data)
         summary_request["instructions"] = (
             data.get("instructions")
             or "Summarize the conversation for a coding agent. Preserve decisions, constraints, "
             "unfinished work, tool results, file paths, and facts needed to continue the task."
         )
-        # The provider's normal stream path is deliberately not reused: compaction must
-        # produce one normal JSON response rather than SSE.
-        api_key = _PROVIDER.auth.get_api_key()
+        api_key = _GEMINI_PROVIDER.auth.get_api_key()
         model = config.models[0]
         contents = []
         for message in data.get("messages", []):
@@ -77,7 +109,10 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
             text = message.get("content", "")
             if text:
                 contents.append(
-                    {"role": "model" if role == "assistant" else "user", "parts": [{"text": str(text)}]}
+                    {
+                        "role": "model" if role == "assistant" else "user",
+                        "parts": [{"text": str(text)}],
+                    }
                 )
         contents.append({"role": "user", "parts": [{"text": summary_request["instructions"]}]})
 
@@ -86,14 +121,16 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
             "generationConfig": {"thinkingConfig": {"thinkingLevel": "low"}},
         }
         url = f"{config.gemini_api_public}/v1beta/models/{model}:generateContent"
-        with _PROVIDER.session.post(
+        with _GEMINI_PROVIDER.session.post(
             url,
             data=json.dumps(body, ensure_ascii=False),
             headers={"Content-Type": "application/json", "x-goog-api-key": api_key},
             timeout=(config.request_timeout_connect, config.request_timeout_read),
         ) as resp:
             if resp.status_code != 200:
-                raise ProxyError(f"Gemini compaction returned HTTP {resp.status_code}: {resp.text[:500]}")
+                raise ProxyError(
+                    f"Gemini compaction returned HTTP {resp.status_code}: {resp.text[:500]}"
+                )
             payload = resp.json()
 
         texts: list[str] = []
@@ -101,12 +138,14 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
             for part in (candidate.get("content") or {}).get("parts", []):
                 if isinstance(part, dict) and part.get("text") and not part.get("thought"):
                     texts.append(part["text"])
-        result = {
-            "object": "response",
-            "status": "completed",
-            "output": [{"type": "compaction", "encrypted_content": "".join(texts)}],
-        }
-        self._json(200, result)
+        self._json(
+            200,
+            {
+                "object": "response",
+                "status": "completed",
+                "output": [{"type": "compaction", "encrypted_content": "".join(texts)}],
+            },
+        )
 
     def _json(self, status: int, payload: dict) -> None:
         body = json.dumps(payload, ensure_ascii=False).encode()
