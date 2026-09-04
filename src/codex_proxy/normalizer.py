@@ -44,6 +44,52 @@ def _tool_name(tool: dict[str, Any]) -> str | None:
     }.get(typ)
 
 
+def _builtin_parameters(tool: dict[str, Any], name: str) -> dict[str, Any]:
+    fn = tool.get("function") or tool
+    parameters = fn.get("parameters") or tool.get("parameters")
+    if isinstance(parameters, dict) and parameters:
+        return parameters
+    if name == "local_shell_command":
+        return {
+            "type": "object",
+            "properties": {
+                "command": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Command argv to execute.",
+                },
+                "working_directory": {
+                    "type": "string",
+                    "description": "Optional working directory for the command.",
+                },
+                "env": {
+                    "type": "object",
+                    "additionalProperties": {"type": "string"},
+                    "description": "Optional environment variables for the command.",
+                },
+                "timeout_ms": {
+                    "type": "integer",
+                    "description": "Optional command timeout in milliseconds.",
+                },
+                "user": {
+                    "type": "string",
+                    "description": "Optional OS user for command execution.",
+                },
+            },
+            "required": ["command"],
+        }
+    if name == "write_file":
+        return {
+            "type": "object",
+            "properties": {
+                "file_path": {"type": "string"},
+                "changes": {"type": "array"},
+            },
+            "required": ["file_path"],
+        }
+    return {"type": "object", "properties": {}}
+
+
 def normalize_tools(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
     result: list[dict[str, Any]] = []
     for tool in tools or []:
@@ -54,17 +100,11 @@ def normalize_tools(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if tool.get("type") in ("function", None):
             result.append(fn)
             continue
-        # Built-in Codex tool descriptions do not have a Gemini schema we can preserve
-        # directly; turn them into explicit function declarations where possible.
-        parameters = fn.get("parameters") or tool.get("parameters") or {
-            "type": "object",
-            "properties": {},
-        }
         result.append(
             {
                 "name": name,
                 "description": fn.get("description") or tool.get("description") or name,
-                "parameters": parameters,
+                "parameters": _builtin_parameters(tool, name),
             }
         )
     return result
@@ -107,11 +147,14 @@ def _tool_call(item: dict[str, Any]) -> tuple[str, str, Any, str | None]:
         args = {"command": item.get("command", ""), "cwd": item.get("cwd", ".")}
     elif not args and typ == "local_shell_call":
         action = item.get("action") or {}
-        exec_data = action.get("exec") or action.get("execute") or action
         args = {
-            "command": exec_data.get("command", []),
-            "working_directory": exec_data.get("working_directory") or exec_data.get("cwd"),
+            "command": action.get("command", []) if isinstance(action, dict) else [],
+            "working_directory": action.get("working_directory") or action.get("cwd") if isinstance(action, dict) else None,
+            "env": action.get("env", {}) if isinstance(action, dict) else {},
+            "timeout_ms": action.get("timeout_ms") if isinstance(action, dict) else None,
+            "user": action.get("user") if isinstance(action, dict) else None,
         }
+        args = {key: value for key, value in args.items() if value is not None}
     elif not args and typ == "fileChange":
         changes = item.get("changes") or []
         args = {
@@ -193,12 +236,16 @@ def normalize_responses_request(data: dict[str, Any]) -> dict[str, Any]:
             "function_call_output",
             "custom_tool_call_output",
             "commandExecutionOutput",
+            "local_shell_call_output",
+            "shell_call_output",
             "fileChangeOutput",
             "tool",
         ):
             call_id = item.get("call_id") or item.get("id") or ""
             name = item.get("name") or function_names.get(call_id, "tool")
             output = item.get("output", item.get("content", item.get("stdout", "")))
+            if typ in ("local_shell_call_output", "shell_call_output") and not output:
+                output = item.get("stderr", "")
             if isinstance(output, (dict, list)):
                 output = json.dumps(output, ensure_ascii=False)
             messages.append(
