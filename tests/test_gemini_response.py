@@ -8,14 +8,13 @@ from codex_proxy.providers.gemini_response import (
 def test_public_gemini_chunk_is_unwrapped():
     chunk = unwrap_gemini_chunk(
         {
-            "candidates": [
-                {"content": {"parts": [{"text": "hello"}]}}
-            ],
+            "candidates": [{"content": {"parts": [{"text": "hello"}]}}],
             "usageMetadata": {
                 "promptTokenCount": 10,
                 "candidatesTokenCount": 4,
                 "thoughtsTokenCount": 6,
                 "cachedContentTokenCount": 2,
+                "totalTokenCount": 20,
             },
         }
     )
@@ -36,19 +35,20 @@ def test_internal_wrapped_chunk_is_supported():
     assert chunk.usage["promptTokenCount"] == 3
 
 
-def test_thoughts_token_count_has_priority_but_legacy_name_is_supported():
+def test_thoughts_token_count_and_total_token_count_are_mapped():
     usage = usage_to_responses_usage(
         {
             "promptTokenCount": 100,
             "candidatesTokenCount": 20,
             "thoughtsTokenCount": 30,
             "thinkingTokenCount": 9,
+            "totalTokenCount": 151,
         }
     )
     assert usage["input_tokens"] == 100
     assert usage["output_tokens"] == 20
     assert usage["output_tokens_details"]["reasoning_tokens"] == 30
-    assert usage["total_tokens"] == 150
+    assert usage["total_tokens"] == 151
 
     legacy = usage_to_responses_usage(
         {
