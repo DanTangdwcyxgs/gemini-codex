@@ -15,14 +15,17 @@ _GEMINI_PROVIDER = GeminiProvider()
 _DEEPSEEK_PROVIDER = DeepSeekProvider()
 
 
-def provider_for_model(model: str):
+def provider_key_for_model(model: str) -> str:
     for prefix, provider_key in config.model_prefixes.items():
         if model.startswith(prefix):
-            if provider_key == "deepseek":
-                return _DEEPSEEK_PROVIDER
-            if provider_key == "gemini":
-                return _GEMINI_PROVIDER
+            if provider_key in {"deepseek", "gemini"}:
+                return provider_key
     raise ProxyError(f"Unsupported model provider for '{model}'. Use a deepseek-* or gemini-* model.")
+
+
+def provider_for_model(model: str):
+    provider_key = provider_key_for_model(model)
+    return _DEEPSEEK_PROVIDER if provider_key == "deepseek" else _GEMINI_PROVIDER
 
 
 def _compaction_text(message: dict[str, Any]) -> str:
@@ -86,8 +89,9 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
                 self._handle_compact(normalized)
                 return
 
-            provider = provider_for_model(model)
-            if isinstance(provider, DeepSeekProvider):
+            provider_key = provider_key_for_model(model)
+            provider = _DEEPSEEK_PROVIDER if provider_key == "deepseek" else _GEMINI_PROVIDER
+            if provider_key == "deepseek":
                 provider.handle_request(dict(data, model=model), self)
             else:
                 normalized = normalize_responses_request(data)
