@@ -61,6 +61,8 @@ def _tool_name(tool: dict[str, Any]) -> str | None:
         "local_shell": "local_shell_command",
         "command_execution": "run_shell_command",
         "commandExecution": "run_shell_command",
+        "shell": "shell_command",
+        "shell_call": "shell_command",
         "local_shell_call": "local_shell_command",
         "file_change": "write_file",
         "fileChange": "write_file",
@@ -85,6 +87,16 @@ def _builtin_parameters(tool: dict[str, Any], name: str) -> dict[str, Any]:
                 "user": {"type": "string"},
             },
             "required": ["command"],
+        }
+    if name == "shell_command":
+        return {
+            "type": "object",
+            "properties": {
+                "commands": {"type": "array", "items": {"type": "string"}},
+                "max_output_length": {"type": "integer"},
+                "timeout_ms": {"type": "integer"},
+            },
+            "required": ["commands"],
         }
     if name == "write_file":
         return {
@@ -144,6 +156,8 @@ def tool_output_types(tools: list[dict[str, Any]]) -> dict[str, str]:
         typ = tool.get("type", "function")
         if typ in ("local_shell", "local_shell_call", "command_execution", "commandExecution"):
             result[name] = "local_shell_call"
+        elif typ in ("shell", "shell_call"):
+            result[name] = "shell_call"
         elif typ in ("apply_patch", "apply_patch_call"):
             result[name] = "apply_patch_call"
         elif typ in ("function", None):
@@ -175,16 +189,25 @@ def _tool_call(item: dict[str, Any]) -> tuple[str, str, Any, str | None]:
         args = {"command": item.get("command", ""), "cwd": item.get("cwd", ".")}
     elif not args and typ in ("local_shell_call", "shell_call"):
         action = item.get("action") or {}
-        exec_data = action.get("exec") if isinstance(action, dict) else None
-        if not isinstance(exec_data, dict):
-            exec_data = action if isinstance(action, dict) else {}
-        args = {
-            "command": exec_data.get("command", []),
-            "working_directory": exec_data.get("working_directory") or exec_data.get("cwd"),
-            "env": exec_data.get("env", {}),
-            "timeout_ms": exec_data.get("timeout_ms"),
-            "user": exec_data.get("user"),
-        }
+        if not isinstance(action, dict):
+            action = {}
+        if typ == "shell_call":
+            args = {
+                "commands": action.get("commands", []),
+                "max_output_length": action.get("max_output_length"),
+                "timeout_ms": action.get("timeout_ms"),
+            }
+        else:
+            exec_data = action.get("exec")
+            if not isinstance(exec_data, dict):
+                exec_data = action
+            args = {
+                "command": exec_data.get("command", []),
+                "working_directory": exec_data.get("working_directory") or exec_data.get("cwd"),
+                "env": exec_data.get("env", {}),
+                "timeout_ms": exec_data.get("timeout_ms"),
+                "user": exec_data.get("user"),
+            }
         args = {key: value for key, value in args.items() if value is not None}
     elif not args and typ in ("fileChange", "apply_patch_call"):
         if typ == "apply_patch_call":
@@ -229,6 +252,18 @@ def normalize_responses_request(data: dict[str, Any]) -> dict[str, Any]:
                 text = _text_content(item.get("content"))
                 if text:
                     messages.append({"role": "user", "content": "[prior compaction summary]\n" + text})
+            continue
+
+        if typ == "reasoning":
+            summary = _text_content(item.get("summary"))
+            content = _text_content(item.get("content"))
+            reasoning = "\n".join(part for part in (summary, content) if part)
+            sig = _signature(item)
+            if reasoning or sig:
+                msg: dict[str, Any] = {"role": "assistant", "content": "", "reasoning_content": reasoning}
+                if sig:
+                    msg["thought_signature"] = sig
+                messages.append(msg)
             continue
 
         if typ in (None, "message", "agentMessage"):
