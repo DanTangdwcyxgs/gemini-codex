@@ -8,4 +8,6 @@ venv/
 .env
 .env.*
 geminikey/
+gemini-api-key.txt
+*.key
 *.log
