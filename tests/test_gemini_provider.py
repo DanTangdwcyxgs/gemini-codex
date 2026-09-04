@@ -74,6 +74,26 @@ def test_gemini_38_request_uses_thinking_level_and_api_header(monkeypatch):
     assert "topK" not in body["generationConfig"]
 
 
+def test_gemini_maps_max_output_tokens(monkeypatch):
+    monkeypatch.setattr(config, "gemini_api_key", "test-key")
+    provider = GeminiProvider()
+    session = DummySession()
+    provider.session = session
+    handler = DummyHandler()
+
+    provider.handle_request(
+        {
+            "model": "gemini-3.8-flash",
+            "messages": [{"role": "user", "content": "hello"}],
+            "max_output_tokens": 4096,
+        },
+        handler,
+    )
+
+    body = json.loads(session.body)
+    assert body["generationConfig"]["maxOutputTokens"] == 4096
+
+
 def test_gemini_accepts_current_flat_responses_function_tool(monkeypatch):
     monkeypatch.setattr(config, "gemini_api_key", "test-key")
     provider = GeminiProvider()
