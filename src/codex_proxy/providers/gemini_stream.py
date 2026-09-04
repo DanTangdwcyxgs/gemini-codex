@@ -135,18 +135,21 @@ def stream_responses_loop(
                         item["thought_signature"] = signature
 
                     if item_type == "local_shell_call":
-                        command = raw_args.get("command", []) if isinstance(raw_args, dict) else raw_args
-                        working_directory = (
-                            raw_args.get("working_directory") or raw_args.get("cwd")
-                            if isinstance(raw_args, dict)
-                            else None
-                        )
+                        args = raw_args if isinstance(raw_args, dict) else {"command": raw_args}
+                        command = args.get("command", [])
+                        if isinstance(command, str):
+                            command = [command]
                         exec_action: dict[str, Any] = {
                             "type": "exec",
                             "command": command,
+                            "env": args.get("env", {}) or {},
                         }
+                        working_directory = args.get("working_directory") or args.get("cwd")
                         if working_directory:
                             exec_action["working_directory"] = working_directory
+                        for key in ("timeout_ms", "user"):
+                            if args.get(key) is not None:
+                                exec_action[key] = args[key]
                         item["action"] = exec_action
 
                     idx = next_output_index
