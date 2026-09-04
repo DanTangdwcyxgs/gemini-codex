@@ -1,17 +1,19 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Tuple
+import json
+from typing import Any
 
 
 def _text_content(content: Any) -> str:
     if isinstance(content, str):
         return content
     if isinstance(content, list):
-        out: list[str] = []
-        for part in content:
-            if isinstance(part, dict) and part.get("type") in ("text", "input_text", "output_text"):
-                out.append(str(part.get("text", "")))
-        return "".join(out)
+        return "".join(
+            str(part.get("text", ""))
+            for part in content
+            if isinstance(part, dict)
+            and part.get("type") in ("text", "input_text", "output_text")
+        )
     return ""
 
 
@@ -25,9 +27,10 @@ def normalize_tools(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return result
 
 
-def normalize_responses_request(data: Dict[str, Any]) -> Dict[str, Any]:
-    """Convert OpenAI Responses input items into a compact internal request."""
-    messages: List[Dict[str, Any]] = []
+def normalize_responses_request(data: dict[str, Any]) -> dict[str, Any]:
+    """Convert OpenAI Responses input items into Gemini-oriented messages."""
+    messages: list[dict[str, Any]] = []
+    function_names: dict[str, str] = {}
     instructions = data.get("instructions")
     if instructions:
         messages.append({"role": "system", "content": instructions})
@@ -44,24 +47,33 @@ def normalize_responses_request(data: Dict[str, Any]) -> Dict[str, Any]:
             role = item.get("role", "user")
             content = _text_content(item.get("content", item.get("text", "")))
             if content:
-                messages.append({"role": role, "content": content})
+                messages.append({"role": "assistant" if role == "assistant" else role, "content": content})
         elif typ in ("function_call", "custom_tool_call"):
+            call_id = item.get("call_id") or item.get("id")
+            name = item.get("name", "")
+            if call_id and name:
+                function_names[call_id] = name
             messages.append({
                 "role": "assistant",
                 "function_call": {
-                    "name": item.get("name", ""),
+                    "name": name,
                     "args": item.get("arguments", "{}"),
-                    "id": item.get("call_id") or item.get("id"),
+                    "id": call_id,
                 },
             })
         elif typ in ("function_call_output", "custom_tool_call_output", "tool"):
+            call_id = item.get("call_id") or item.get("id")
             messages.append({
                 "role": "tool",
-                "tool_call_id": item.get("call_id") or item.get("id"),
+                "tool_call_id": call_id,
+                "name": item.get("name") or function_names.get(call_id, "tool"),
                 "content": _text_content(item.get("output", item.get("content", ""))),
             })
         elif typ in ("local_shell_call", "command_execution"):
-            messages.append({"role": "assistant", "content": _text_content(item.get("command", ""))})
+            command = item.get("command", "")
+            if isinstance(command, list):
+                command = " ".join(str(x) for x in command)
+            messages.append({"role": "assistant", "content": str(command)})
 
     result = dict(data)
     result["messages"] = messages
