@@ -6,7 +6,7 @@ from typing import Any
 
 from .config import config
 from .exceptions import ProxyError
-from .normalizer import normalize_responses_request
+from .normalizer import encode_proxy_compaction, normalize_responses_request
 from .providers.deepseek import DeepSeekProvider
 from .providers.gemini import GeminiProvider
 
@@ -149,12 +149,13 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
                 if isinstance(part, dict) and part.get("text") and not part.get("thought"):
                     texts.append(part["text"])
 
+        summary = "".join(texts)
         self._json(
             200,
             {
                 "object": "response",
                 "status": "completed",
-                "output": [{"type": "compaction", "encrypted_content": "".join(texts)}],
+                "output": [{"type": "compaction", "encrypted_content": encode_proxy_compaction(summary)}],
             },
         )
 
