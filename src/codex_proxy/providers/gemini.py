@@ -9,6 +9,7 @@ from ..config import config
 from ..exceptions import ProviderError
 from ..utils import create_session, json_dumps
 from .gemini_stream import stream_responses_loop
+from .gemini_utils import normalize_function_tools
 
 
 class GeminiProvider:
@@ -18,7 +19,7 @@ class GeminiProvider:
 
     @staticmethod
     def _response_part(msg: dict[str, Any]) -> dict[str, Any]:
-        """Build a Gemini FunctionResponse and preserve required call metadata."""
+        """Build a Gemini FunctionResponse with the exact originating call metadata."""
         response: dict[str, Any] = {
             "name": msg.get("name", "tool"),
             "response": {"result": msg.get("content", "")},
@@ -34,10 +35,7 @@ class GeminiProvider:
             args = json.loads(fc.get("args", "{}")) if isinstance(fc.get("args"), str) else fc.get("args", {})
         except json.JSONDecodeError:
             args = {}
-        call = {
-            "name": fc.get("name", ""),
-            "args": args,
-        }
+        call = {"name": fc.get("name", ""), "args": args}
         if fc.get("id"):
             call["id"] = fc["id"]
         part: dict[str, Any] = {"functionCall": call}
@@ -67,8 +65,7 @@ class GeminiProvider:
             for cp in content:
                 if not isinstance(cp, dict):
                     continue
-                ctype = cp.get("type")
-                if ctype in ("text", "input_text", "output_text") and cp.get("text"):
+                if cp.get("type") in ("text", "input_text", "output_text") and cp.get("text"):
                     p: dict[str, Any] = {"text": cp["text"]}
                     sig = cp.get("thought_signature") or cp.get("thoughtSignature")
                     if sig:
@@ -93,7 +90,7 @@ class GeminiProvider:
                 contents.append({"role": "user", "parts": [self._response_part(msg)]})
                 continue
 
-            parts = []
+            parts: list[dict[str, Any]] = []
             if "function_call" in msg:
                 parts.append(self._function_call_part(msg["function_call"]))
             parts.extend(self._message_parts(msg))
@@ -110,10 +107,7 @@ class GeminiProvider:
         if system_text:
             body["systemInstruction"] = {"parts": [{"text": "\n\n".join(system_text)}]}
 
-        level = str(
-            (data.get("reasoning") or {}).get("effort")
-            or config.default_reasoning_level
-        ).lower()
+        level = str((data.get("reasoning") or {}).get("effort") or config.default_reasoning_level).lower()
         if level == "minimal":
             level = "low"
         if level not in {"low", "medium", "high"}:
@@ -122,8 +116,7 @@ class GeminiProvider:
             "thinkingConfig": {"includeThoughts": True, "thinkingLevel": level}
         }
 
-        tools = data.get("tools") or []
-        declarations = [tool for tool in tools if tool.get("name")]
+        declarations = normalize_function_tools(data.get("tools") or [])
         if declarations:
             body["tools"] = [{"functionDeclarations": declarations}]
 
@@ -132,10 +125,7 @@ class GeminiProvider:
             with self.session.post(
                 url,
                 data=json_dumps(body),
-                headers={
-                    "Content-Type": "application/json",
-                    "x-goog-api-key": api_key,
-                },
+                headers={"Content-Type": "application/json", "x-goog-api-key": api_key},
                 stream=True,
                 timeout=(config.request_timeout_connect, config.request_timeout_read),
             ) as resp:
