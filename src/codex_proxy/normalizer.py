@@ -21,6 +21,7 @@ def _text_content(content: Any) -> str:
                 "input_text",
                 "output_text",
                 "reasoning_text",
+                "summary_text",
             ):
                 chunks.append(str(part.get("text", "")))
         return "".join(chunks)
