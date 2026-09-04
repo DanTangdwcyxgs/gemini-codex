@@ -70,6 +70,9 @@ class GeminiProvider:
                     if sig:
                         part["thoughtSignature"] = sig
                     parts.append(part)
+
+        if signature and not parts:
+            parts.append({"text": "", "thoughtSignature": signature})
         return parts
 
     def handle_request(self, data: dict[str, Any], handler: Any) -> None:
@@ -111,9 +114,17 @@ class GeminiProvider:
             level = "low"
         if level not in {"low", "medium", "high"}:
             level = "medium"
-        body["generationConfig"] = {
-            "thinkingConfig": {"includeThoughts": True, "thinkingLevel": level}
-        }
+        thinking_config: dict[str, Any] = {"includeThoughts": True, "thinkingLevel": level}
+        generation_config: dict[str, Any] = {"thinkingConfig": thinking_config}
+        max_output_tokens = data.get("max_output_tokens")
+        if max_output_tokens is None:
+            max_output_tokens = data.get("max_tokens")
+        if max_output_tokens is not None:
+            try:
+                generation_config["maxOutputTokens"] = int(max_output_tokens)
+            except (TypeError, ValueError):
+                raise ProviderError("max_output_tokens must be an integer") from None
+        body["generationConfig"] = generation_config
 
         declarations = normalize_function_tools(data.get("tools") or [])
         if declarations:
