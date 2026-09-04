@@ -18,9 +18,8 @@ _DEEPSEEK_PROVIDER = DeepSeekProvider()
 
 def provider_key_for_model(model: str) -> str:
     for prefix, provider_key in config.model_prefixes.items():
-        if model.startswith(prefix):
-            if provider_key in {"deepseek", "gemini"}:
-                return provider_key
+        if model.startswith(prefix) and provider_key in {"deepseek", "gemini"}:
+            return provider_key
     raise ProxyError(f"Unsupported model provider for '{model}'. Use a deepseek-* or gemini-* model.")
 
 
@@ -30,10 +29,19 @@ def provider_for_model(model: str):
 
 
 def has_compaction_trigger(data: dict[str, Any]) -> bool:
-    return any(
-        isinstance(item, dict) and item.get("type") == "compaction_trigger"
-        for item in data.get("input") or []
-    )
+    items = data.get("input") or []
+    return any(isinstance(item, dict) and item.get("type") == "compaction_trigger" for item in items)
+
+
+def validate_compaction_trigger(data: dict[str, Any]) -> None:
+    items = data.get("input") or []
+    triggers = [i for i, item in enumerate(items) if isinstance(item, dict) and item.get("type") == "compaction_trigger"]
+    if not triggers:
+        return
+    if len(triggers) != 1 or triggers[0] != len(items) - 1:
+        raise ProxyError("compaction_trigger must occur exactly once as the final input item")
+    if data.get("stream") is not True:
+        raise ProxyError("compaction_trigger requires stream=true")
 
 
 def _compaction_text(message: dict[str, Any]) -> str:
@@ -89,7 +97,11 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
             length = int(self.headers.get("Content-Length", "0"))
             if not length:
                 raise ValueError("empty request body")
+            if length > config.max_body_bytes:
+                raise ProxyError(f"Request body exceeds {config.max_body_bytes} bytes")
             data = json.loads(self.rfile.read(length))
+            if not isinstance(data, dict):
+                raise ValueError("request body must be a JSON object")
             model = data.get("model") or config.models[0]
 
             if self.path.endswith("/compact"):
@@ -98,6 +110,7 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
                 return
 
             if has_compaction_trigger(data):
+                validate_compaction_trigger(data)
                 normalized = normalize_responses_request(data)
                 self._handle_compact_v2(normalized, model)
                 return
@@ -112,7 +125,7 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
                 provider.handle_request(normalized, self)
         except ProxyError as exc:
             self._json(502, {"error": {"message": str(exc), "type": "proxy_error"}})
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             self._json(400, {"error": {"message": str(exc), "type": "invalid_request_error"}})
 
     def _compact_with_gemini(self, data: dict[str, Any]) -> str:

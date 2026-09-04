@@ -1,17 +1,18 @@
 """Normalize Gemini native streaming payloads across public/internal APIs."""
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass, field
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any
 
 
 @dataclass
 class GeminiChunk:
-    candidates: List[Dict[str, Any]] = field(default_factory=list)
-    usage: Optional[Dict[str, Any]] = None
+    candidates: list[dict[str, Any]] = field(default_factory=list)
+    usage: dict[str, Any] | None = None
 
 
-def unwrap_gemini_chunk(data: Dict[str, Any]) -> GeminiChunk:
+def unwrap_gemini_chunk(data: dict[str, Any]) -> GeminiChunk:
     """Accept both public Gemini and legacy/internal wrapped response shapes."""
     response = data.get("response")
     if isinstance(response, dict):
@@ -31,7 +32,7 @@ def unwrap_gemini_chunk(data: Dict[str, Any]) -> GeminiChunk:
     )
 
 
-def usage_to_responses_usage(usage: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+def usage_to_responses_usage(usage: dict[str, Any] | None) -> dict[str, Any] | None:
     """Map Gemini token counters to the proxy's Responses usage shape."""
     if not usage:
         return None
@@ -55,7 +56,7 @@ def usage_to_responses_usage(usage: Optional[Dict[str, Any]]) -> Optional[Dict[s
     }
 
 
-def iter_parts(chunk: GeminiChunk) -> Iterable[Dict[str, Any]]:
+def iter_parts(chunk: GeminiChunk) -> Iterable[dict[str, Any]]:
     """Yield candidate content parts while tolerating incomplete chunks."""
     for candidate in chunk.candidates:
         content = candidate.get("content") or {}

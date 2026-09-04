@@ -1,9 +1,11 @@
 import json
 import logging
 import sys
+
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
+
 from .config import config
 
 logger = logging.getLogger(__name__)
@@ -25,7 +27,7 @@ except ImportError:
         return json.dumps(data).encode("utf-8")
 
 
-def setup_logging():
+def setup_logging() -> None:
     root = logging.getLogger()
     root.setLevel(config.log_level)
     handler = logging.StreamHandler(sys.stderr)
@@ -37,13 +39,16 @@ def setup_logging():
     logging.getLogger("urllib3").setLevel(logging.WARNING)
 
 
-def create_session(pool_connections=20, pool_maxsize=100) -> requests.Session:
+def create_session(pool_connections: int = 20, pool_maxsize: int = 100) -> requests.Session:
     s = requests.Session()
     retries = Retry(
         total=3,
+        connect=3,
+        read=0,
+        status=3,
         backoff_factor=0.1,
         status_forcelist=[502, 503, 504],
-        allowed_methods=["HEAD", "GET", "POST", "PUT", "DELETE", "OPTIONS", "TRACE"],
+        allowed_methods=["HEAD", "GET", "OPTIONS"],
     )
     adapter = HTTPAdapter(
         pool_connections=pool_connections,
