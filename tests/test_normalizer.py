@@ -110,7 +110,7 @@ def test_reasoning_item_is_not_dropped_from_history():
         {
             "role": "assistant",
             "content": "",
-            "reasoning_content": "",
+            "reasoning_content": "checked the failing test",
         }
     ]
 
