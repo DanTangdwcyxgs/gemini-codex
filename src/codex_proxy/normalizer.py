@@ -31,12 +31,7 @@ def normalize_tools(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def normalize_responses_request(data: dict[str, Any]) -> dict[str, Any]:
-    """Convert OpenAI Responses input items into Gemini-oriented messages.
-
-    Thought signatures are retained because Gemini 3.x requires the signature
-    from a prior model response to be sent back during subsequent function
-    calling turns.
-    """
+    """Convert OpenAI Responses input items into Gemini-oriented messages."""
     messages: list[dict[str, Any]] = []
     function_names: dict[str, str] = {}
     function_signatures: dict[str, str] = {}
@@ -54,17 +49,20 @@ def normalize_responses_request(data: dict[str, Any]) -> dict[str, Any]:
         typ = item.get("type")
         if typ in (None, "message"):
             role = item.get("role", "user")
+            if role == "developer":
+                role = "system"
             content = item.get("content", item.get("text", ""))
             text = _text_content(content)
-            if role == "assistant" and (text or _signature(item)):
+            sig = _signature(item)
+            if role == "assistant" and (text or sig):
                 msg: dict[str, Any] = {"role": "assistant", "content": text}
-                if _signature(item):
-                    msg["thought_signature"] = _signature(item)
+                if sig:
+                    msg["thought_signature"] = sig
                 messages.append(msg)
             elif text:
                 messages.append({"role": role, "content": text})
 
-            if isinstance(content, list):
+            if isinstance(content, list) and messages:
                 for part in content:
                     if isinstance(part, dict) and _signature(part):
                         messages[-1]["thought_signature"] = _signature(part)
