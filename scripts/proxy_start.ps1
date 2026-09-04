@@ -1,5 +1,5 @@
 param(
-    [string]$ApiKeyFile = "$(Join-Path $PSScriptRoot '..\geminikey\geminiapikey.txt')",
+    [string]$ApiKeyFile = "$(Join-Path $PSScriptRoot '..\gemini-api-key.txt')",
     [string]$Python = "python",
     [int]$Port = 8765
 )
@@ -20,8 +20,8 @@ $env:CODEX_PROXY_GEMINI_API_KEY = $key
 $env:CODEX_PROXY_PORT = "$Port"
 $env:PYTHONPATH = Join-Path $RepoRoot 'src'
 
-Write-Host "Starting Gemini Codex proxy on http://127.0.0.1:$Port ..."
-Write-Host "API key loaded from: $ApiKeyFile"
+Write-Host "Starting Gemini Codex proxy on localhost:$Port ..."
+Write-Host "API key loaded from the local key file."
 Write-Host "Press Ctrl+C to stop."
 
 Push-Location $RepoRoot
