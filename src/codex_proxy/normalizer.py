@@ -316,13 +316,13 @@ def normalize_responses_request(data: dict[str, Any]) -> dict[str, Any]:
             role = str(item.get("role") or "user")
             if role == "developer":
                 role = "system"
-            content = item.get("content", item.get("text", ""))
-            text = _text_content(content)
+            raw_content = item.get("content", item.get("text", ""))
+            text = _text_content(raw_content)
             reasoning = ""
-            if isinstance(content, list):
+            if isinstance(raw_content, list):
                 reasoning = "".join(
                     str(part.get("text", ""))
-                    for part in content
+                    for part in raw_content
                     if isinstance(part, dict) and part.get("type") == "reasoning_text"
                 )
             reasoning += str(item.get("reasoning_content") or "")
@@ -350,9 +350,9 @@ def normalize_responses_request(data: dict[str, Any]) -> dict[str, Any]:
             "web_search_call",
             "mcp_call",
         }:
-            call_id, name, args, sig, metadata = _tool_call(item)
-            if metadata is not None:
-                mcp_metadata[name] = metadata
+            call_id, name, args, sig, tool_metadata = _tool_call(item)
+            if tool_metadata is not None:
+                mcp_metadata[name] = tool_metadata
             if call_id:
                 function_names[call_id] = name
                 if sig:
