@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import base64
 import json
 from typing import Any
+
+
+_COMPACTION_PREFIX = "gemini-codex-v1:"
 
 
 def _text_content(content: Any) -> str:
@@ -23,6 +27,25 @@ def _text_content(content: Any) -> str:
     if isinstance(content, dict):
         return str(content.get("content") or content.get("text") or "")
     return ""
+
+
+def encode_proxy_compaction(text: str) -> str:
+    """Encode our own compaction payload for safe round-tripping through Responses history."""
+    return _COMPACTION_PREFIX + base64.urlsafe_b64encode(text.encode("utf-8")).decode("ascii").rstrip("=")
+
+
+def decode_proxy_compaction(value: Any) -> str | None:
+    """Decode only compaction payloads emitted by this proxy."""
+    if not isinstance(value, str) or not value.startswith(_COMPACTION_PREFIX):
+        return None
+    encoded = value[len(_COMPACTION_PREFIX) :]
+    if not encoded:
+        return ""
+    try:
+        padded = encoded + "=" * (-len(encoded) % 4)
+        return base64.urlsafe_b64decode(padded.encode("ascii")).decode("utf-8")
+    except (ValueError, UnicodeDecodeError):
+        return None
 
 
 def _signature(item: dict[str, Any]) -> str | None:
@@ -53,28 +76,11 @@ def _builtin_parameters(tool: dict[str, Any], name: str) -> dict[str, Any]:
         return {
             "type": "object",
             "properties": {
-                "command": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "Command argv to execute.",
-                },
-                "working_directory": {
-                    "type": "string",
-                    "description": "Optional working directory for the command.",
-                },
-                "env": {
-                    "type": "object",
-                    "additionalProperties": {"type": "string"},
-                    "description": "Optional environment variables for the command.",
-                },
-                "timeout_ms": {
-                    "type": "integer",
-                    "description": "Optional command timeout in milliseconds.",
-                },
-                "user": {
-                    "type": "string",
-                    "description": "Optional OS user for command execution.",
-                },
+                "command": {"type": "array", "items": {"type": "string"}},
+                "working_directory": {"type": "string"},
+                "env": {"type": "object", "additionalProperties": {"type": "string"}},
+                "timeout_ms": {"type": "integer"},
+                "user": {"type": "string"},
             },
             "required": ["command"],
         }
@@ -139,26 +145,31 @@ def _tool_call(item: dict[str, Any]) -> tuple[str, str, Any, str | None]:
         name = {
             "commandExecution": "run_shell_command",
             "local_shell_call": "local_shell_command",
+            "shell_call": "shell_command",
             "fileChange": "write_file",
+            "apply_patch_call": "apply_patch",
             "web_search_call": "web_search",
         }.get(typ, "tool")
 
     if not args and typ == "commandExecution":
         args = {"command": item.get("command", ""), "cwd": item.get("cwd", ".")}
-    elif not args and typ == "local_shell_call":
+    elif not args and typ in ("local_shell_call", "shell_call"):
         action = item.get("action") or {}
+        exec_data = action.get("exec") if isinstance(action, dict) else None
+        if not isinstance(exec_data, dict):
+            exec_data = action if isinstance(action, dict) else {}
         args = {
-            "command": action.get("command", []) if isinstance(action, dict) else [],
-            "working_directory": action.get("working_directory") or action.get("cwd") if isinstance(action, dict) else None,
-            "env": action.get("env", {}) if isinstance(action, dict) else {},
-            "timeout_ms": action.get("timeout_ms") if isinstance(action, dict) else None,
-            "user": action.get("user") if isinstance(action, dict) else None,
+            "command": exec_data.get("command", []),
+            "working_directory": exec_data.get("working_directory") or exec_data.get("cwd"),
+            "env": exec_data.get("env", {}),
+            "timeout_ms": exec_data.get("timeout_ms"),
+            "user": exec_data.get("user"),
         }
         args = {key: value for key, value in args.items() if value is not None}
-    elif not args and typ == "fileChange":
-        changes = item.get("changes") or []
+    elif not args and typ in ("fileChange", "apply_patch_call"):
+        changes = item.get("changes") or item.get("operations") or []
         args = {
-            "file_path": changes[0].get("path", "") if changes else "",
+            "file_path": item.get("file_path") or (changes[0].get("path", "") if changes else ""),
             "changes": changes,
         }
     elif not args and typ == "web_search_call":
@@ -186,6 +197,17 @@ def normalize_responses_request(data: dict[str, Any]) -> dict[str, Any]:
             continue
 
         typ = item.get("type")
+
+        if typ in ("compaction", "compaction_summary", "context_compaction"):
+            summary = decode_proxy_compaction(item.get("encrypted_content"))
+            if summary:
+                messages.append({"role": "user", "content": "[prior compaction summary]\n" + summary})
+            elif isinstance(item.get("content"), (str, list, dict)):
+                text = _text_content(item.get("content"))
+                if text:
+                    messages.append({"role": "user", "content": "[prior compaction summary]\n" + text})
+            continue
+
         if typ in (None, "message", "agentMessage"):
             role = item.get("role", "user")
             if role == "developer":
@@ -218,7 +240,9 @@ def normalize_responses_request(data: dict[str, Any]) -> dict[str, Any]:
             "custom_tool_call",
             "commandExecution",
             "local_shell_call",
+            "shell_call",
             "fileChange",
+            "apply_patch_call",
             "web_search_call",
         ):
             call_id, name, args, sig = _tool_call(item)
@@ -239,6 +263,7 @@ def normalize_responses_request(data: dict[str, Any]) -> dict[str, Any]:
             "local_shell_call_output",
             "shell_call_output",
             "fileChangeOutput",
+            "apply_patch_call_output",
             "tool",
         ):
             call_id = item.get("call_id") or item.get("id") or ""
