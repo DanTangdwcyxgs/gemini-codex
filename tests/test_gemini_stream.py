@@ -85,6 +85,29 @@ def test_shell_function_maps_to_local_shell_call():
     assert item["action"]["working_directory"] == "workspace"
 
 
+def test_apply_patch_function_maps_to_native_apply_patch_call():
+    raw = [
+        b'data: {"candidates":[{"content":{"parts":[{"functionCall":{"name":"apply_patch","args":{"operation":{"type":"update_file","path":"src/demo.py","diff":"@@ -1 +1 @@\\n-old\\n+new"}},"id":"patch_1"}}]}}]}',
+        b'data: [DONE]',
+    ]
+    handler = DummyHandler()
+    stream_responses_loop(
+        _response(raw),
+        handler,
+        "gemini-3.8-flash",
+        457,
+        {"tool_output_types": {"apply_patch": "apply_patch_call"}},
+    )
+    events = _events(handler)
+    item = next(payload["item"] for event, payload in events if event == "response.output_item.done")
+
+    assert item["type"] == "apply_patch_call"
+    assert item["call_id"] == "patch_1"
+    assert item["operation"]["type"] == "update_file"
+    assert item["operation"]["path"] == "src/demo.py"
+    assert item["operation"]["diff"].startswith("@@ -1 +1 @@")
+
+
 def test_invalid_upstream_chunk_emits_failed_not_completed():
     raw = [
         b'data: {"candidates":[{"content":{"parts":[{"text":"before failure"}]}}]}',
