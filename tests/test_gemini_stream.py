@@ -108,6 +108,36 @@ def test_managed_shell_function_maps_to_native_shell_call():
     assert item["action"]["timeout_ms"] == 5000
 
 
+def test_mcp_function_maps_back_to_mcp_call():
+    raw = [
+        b'data: {"candidates":[{"content":{"parts":[{"functionCall":{"name":"mcp__docs__search","args":{"query":"hello"},"id":"mcp_1"}}]}}]}',
+        b'data: [DONE]',
+    ]
+    handler = DummyHandler()
+    stream_responses_loop(
+        _response(raw),
+        handler,
+        "gemini-3.8-flash",
+        459,
+        {
+            "tool_output_types": {"mcp__docs__search": "mcp_call"},
+            "tool_output_metadata": {
+                "mcp__docs__search": {
+                    "type": "mcp_call",
+                    "server_label": "docs",
+                    "original_name": "search",
+                }
+            },
+        },
+    )
+    events = _events(handler)
+    item = next(payload["item"] for event, payload in events if event == "response.output_item.done")
+    assert item["type"] == "mcp_call"
+    assert item["name"] == "search"
+    assert item["server_label"] == "docs"
+    assert item["arguments"] == '{"query": "hello"}'
+
+
 def test_apply_patch_function_maps_to_native_apply_patch_call():
     raw = [
         b'data: {"candidates":[{"content":{"parts":[{"functionCall":{"name":"apply_patch","args":{"operation":{"type":"update_file","path":"src/demo.py","diff":"@@ -1 +1 @@\\n-old\\n+new"}},"id":"patch_1"}}]}}]}',
