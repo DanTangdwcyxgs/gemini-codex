@@ -19,7 +19,6 @@ class GeminiProvider:
 
     @staticmethod
     def _response_part(msg: dict[str, Any]) -> dict[str, Any]:
-        """Build a Gemini FunctionResponse with the exact originating call metadata."""
         response: dict[str, Any] = {
             "name": msg.get("name", "tool"),
             "response": {"result": msg.get("content", "")},
@@ -66,11 +65,11 @@ class GeminiProvider:
                 if not isinstance(cp, dict):
                     continue
                 if cp.get("type") in ("text", "input_text", "output_text") and cp.get("text"):
-                    p: dict[str, Any] = {"text": cp["text"]}
+                    part: dict[str, Any] = {"text": cp["text"]}
                     sig = cp.get("thought_signature") or cp.get("thoughtSignature")
                     if sig:
-                        p["thoughtSignature"] = sig
-                    parts.append(p)
+                        part["thoughtSignature"] = sig
+                    parts.append(part)
         return parts
 
     def handle_request(self, data: dict[str, Any], handler: Any) -> None:
@@ -130,11 +129,11 @@ class GeminiProvider:
                 timeout=(config.request_timeout_connect, config.request_timeout_read),
             ) as resp:
                 if resp.status_code != 200:
-                    raise ProviderError(
-                        f"Gemini API returned HTTP {resp.status_code}: {resp.text[:500]}"
-                    )
+                    raise ProviderError(f"Gemini API returned HTTP {resp.status_code}: {resp.text[:500]}")
                 handler.send_response(200)
                 handler.send_header("Content-Type", "text/event-stream; charset=utf-8")
+                handler.send_header("Cache-Control", "no-cache")
+                handler.send_header("X-Accel-Buffering", "no")
                 handler.send_header("Connection", "keep-alive")
                 handler.end_headers()
                 stream_responses_loop(resp, handler, model, int(time.time()), data)
