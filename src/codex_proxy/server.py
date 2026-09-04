@@ -31,10 +31,7 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
             self._json(200, payload)
             return
         if self.path in ("/v1/models", "/models"):
-            providers = {
-                "deepseek": "deepseek",
-                "gemini": "google",
-            }
+            providers = {"deepseek": "deepseek", "gemini": "google"}
             self._json(
                 200,
                 {
@@ -70,19 +67,14 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
             model = data.get("model") or config.models[0]
 
             if self.path.endswith("/compact"):
-                if not model.startswith("gemini-"):
-                    raise ProxyError("Compaction is currently implemented for Gemini models only.")
                 normalized = normalize_responses_request(data)
                 self._handle_compact(normalized)
                 return
 
             provider = provider_for_model(model)
             if isinstance(provider, DeepSeekProvider):
-                # DeepSeek implements the Responses API natively, so preserve the original
-                # request instead of rewriting it through the Gemini-oriented normalizer.
-                data = dict(data)
-                data["model"] = model
-                provider.handle_request(data, self)
+                # DeepSeek already speaks Responses. Do not rewrite or mutate its input history.
+                provider.handle_request(dict(data, model=model), self)
             else:
                 normalized = normalize_responses_request(data)
                 normalized["model"] = model
@@ -93,15 +85,16 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
             self._json(400, {"error": {"message": str(exc), "type": "invalid_request_error"}})
 
     def _handle_compact(self, data: dict) -> None:
-        summary_request = dict(data)
-        summary_request["instructions"] = (
+        """Compact with a dedicated configurable Gemini model."""
+        api_key = _GEMINI_PROVIDER.auth.get_api_key()
+        model = config.compaction_model
+        instruction = (
             data.get("instructions")
             or "Summarize the conversation for a coding agent. Preserve decisions, constraints, "
             "unfinished work, tool results, file paths, and facts needed to continue the task."
         )
-        api_key = _GEMINI_PROVIDER.auth.get_api_key()
-        model = config.models[0]
-        contents = []
+
+        contents: list[dict] = []
         for message in data.get("messages", []):
             role = message.get("role", "user")
             if role == "system":
@@ -114,8 +107,8 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
                         "parts": [{"text": str(text)}],
                     }
                 )
-        contents.append({"role": "user", "parts": [{"text": summary_request["instructions"]}]})
 
+        contents.append({"role": "user", "parts": [{"text": instruction}]})
         body = {
             "contents": contents,
             "generationConfig": {"thinkingConfig": {"thinkingLevel": "low"}},
@@ -138,12 +131,18 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
             for part in (candidate.get("content") or {}).get("parts", []):
                 if isinstance(part, dict) and part.get("text") and not part.get("thought"):
                     texts.append(part["text"])
+
         self._json(
             200,
             {
                 "object": "response",
                 "status": "completed",
-                "output": [{"type": "compaction", "encrypted_content": "".join(texts)}],
+                "output": [
+                    {
+                        "type": "compaction",
+                        "encrypted_content": "".join(texts),
+                    }
+                ],
             },
         )
 
