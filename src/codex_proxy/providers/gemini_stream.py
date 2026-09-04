@@ -27,7 +27,7 @@ def stream_responses_loop(
     """Translate Gemini GenerateContent SSE chunks into Responses SSE events."""
     response_id = f"resp_{created_ts}"
     seq = 0
-    output: list[dict[str, Any]] = []
+    output_by_index: dict[int, dict[str, Any]] = {}
     next_output_index = 0
     message_item: dict[str, Any] | None = None
     message_index: int | None = None
@@ -37,6 +37,9 @@ def stream_responses_loop(
     metadata = request_metadata or {}
     tool_output_types = metadata.get("tool_output_types") or {}
     tool_output_metadata = metadata.get("tool_output_metadata") or {}
+
+    def ordered_output() -> list[dict[str, Any]]:
+        return [output_by_index[index] for index in sorted(output_by_index)]
 
     def emit(event_type: str, payload: dict[str, Any]) -> None:
         nonlocal seq
@@ -65,7 +68,7 @@ def stream_responses_loop(
                     "status": "failed",
                     "model": model,
                     "created_at": created_ts,
-                    "output": output,
+                    "output": ordered_output(),
                     "usage": usage,
                     "error": {"code": code, "message": str(exc)[:1000]},
                 },
@@ -84,6 +87,7 @@ def stream_responses_loop(
                 "summary": [],
                 "content": [{"type": "reasoning_text", "text": ""}],
             }
+            output_by_index[reasoning_index] = reasoning_item
             emit(
                 "response.output_item.added",
                 {"response_id": response_id, "output_index": reasoning_index, "item": reasoning_item},
@@ -104,6 +108,7 @@ def stream_responses_loop(
                 "status": "in_progress",
                 "content": [{"type": "output_text", "text": ""}],
             }
+            output_by_index[message_index] = message_item
             emit(
                 "response.output_item.added",
                 {"response_id": response_id, "output_index": message_index, "item": message_item},
@@ -199,15 +204,35 @@ def stream_responses_loop(
 
                         idx = next_output_index
                         next_output_index += 1
+                        output_by_index[idx] = item
                         emit(
                             "response.output_item.added",
                             {"response_id": response_id, "output_index": idx, "item": item},
                         )
+                        if item_type == "function_call":
+                            arguments = item["arguments"]
+                            emit(
+                                "response.function_call_arguments.delta",
+                                {
+                                    "response_id": response_id,
+                                    "item_id": item["id"],
+                                    "output_index": idx,
+                                    "delta": arguments,
+                                },
+                            )
+                            emit(
+                                "response.function_call_arguments.done",
+                                {
+                                    "response_id": response_id,
+                                    "item_id": item["id"],
+                                    "output_index": idx,
+                                    "arguments": arguments,
+                                },
+                            )
                         emit(
                             "response.output_item.done",
                             {"response_id": response_id, "output_index": idx, "item": item},
                         )
-                        output.append(item)
                         continue
 
                     text = part.get("text")
@@ -231,6 +256,9 @@ def stream_responses_loop(
                                     "delta": thought_text,
                                 },
                             )
+                        elif signature:
+                            item, _ = ensure_reasoning()
+                            item["thought_signature"] = signature
                         continue
 
                     if text:
@@ -248,6 +276,9 @@ def stream_responses_loop(
                                 "delta": text,
                             },
                         )
+                    elif signature:
+                        item, _ = ensure_message()
+                        item["thought_signature"] = signature
             except Exception as exc:
                 emit_failed(exc, "invalid_upstream_chunk")
                 return
@@ -261,7 +292,6 @@ def stream_responses_loop(
             "response.output_item.done",
             {"response_id": response_id, "output_index": reasoning_index, "item": reasoning_item},
         )
-        output.append(reasoning_item)
 
     if message_item is not None and message_index is not None:
         message_item["status"] = "completed"
@@ -269,8 +299,8 @@ def stream_responses_loop(
             "response.output_item.done",
             {"response_id": response_id, "output_index": message_index, "item": message_item},
         )
-        output.append(message_item)
 
+    output = ordered_output()
     if usage:
         total_usage = {
             "input_tokens": usage["input_tokens"],
