@@ -7,6 +7,16 @@ from typing import Any
 from .gemini_response import iter_parts, unwrap_gemini_chunk, usage_to_responses_usage
 
 
+_SHELL_NAMES = {
+    "shell",
+    "shell_command",
+    "container.exec",
+    "local_shell",
+    "local_shell_command",
+    "run_shell_command",
+}
+
+
 def stream_responses_loop(
     resp: Any,
     handler: Any,
@@ -25,6 +35,7 @@ def stream_responses_loop(
     reasoning_index: int | None = None
     usage: dict[str, Any] | None = None
     metadata = request_metadata or {}
+    tool_output_types = metadata.get("tool_output_types") or {}
 
     def emit(event_type: str, payload: dict[str, Any]) -> None:
         nonlocal seq
@@ -104,18 +115,40 @@ def stream_responses_loop(
             for part in iter_parts(chunk):
                 function_call = part.get("functionCall")
                 if isinstance(function_call, dict):
+                    name = str(function_call.get("name", ""))
                     call_id = function_call.get("id") or f"call_{created_ts}_{next_output_index}"
-                    item = {
+                    raw_args = function_call.get("args", {})
+                    item_type = tool_output_types.get(name)
+                    if not item_type:
+                        item_type = "local_shell_call" if name in _SHELL_NAMES else "function_call"
+
+                    item: dict[str, Any] = {
                         "id": call_id,
-                        "type": "function_call",
+                        "type": item_type,
                         "status": "completed",
-                        "name": function_call.get("name", ""),
-                        "arguments": json.dumps(function_call.get("args", {}), ensure_ascii=False),
+                        "name": name,
+                        "arguments": json.dumps(raw_args, ensure_ascii=False),
                         "call_id": call_id,
                     }
                     signature = part.get("thoughtSignature") or part.get("thought_signature")
                     if signature:
                         item["thought_signature"] = signature
+
+                    if item_type == "local_shell_call":
+                        command = raw_args.get("command", []) if isinstance(raw_args, dict) else raw_args
+                        working_directory = (
+                            raw_args.get("working_directory") or raw_args.get("cwd")
+                            if isinstance(raw_args, dict)
+                            else None
+                        )
+                        exec_action: dict[str, Any] = {
+                            "type": "exec",
+                            "command": command,
+                        }
+                        if working_directory:
+                            exec_action["working_directory"] = working_directory
+                        item["action"] = exec_action
+
                     idx = next_output_index
                     next_output_index += 1
                     emit(
@@ -168,7 +201,6 @@ def stream_responses_loop(
                         },
                     )
         except Exception:
-            # A malformed individual chunk must not terminate the whole stream.
             continue
 
     if reasoning_item is not None and reasoning_index is not None:
