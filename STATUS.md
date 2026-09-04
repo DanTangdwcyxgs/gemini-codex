@@ -14,11 +14,21 @@ Gemini 3.8 Flash compatibility work is implemented and protected by Python 3.13 
 - Gemini 3 thought-signature preservation
 - Stable Responses `output_index` assignment
 - Function-result round-trip reconstruction for a second model turn
+- Codex `local_shell` -> Gemini declaration -> native `local_shell_call`
+- Codex `local_shell_call_output` reconstruction for the next Gemini turn
+- Full `local_shell_call.action` fields: command, env, working directory, timeout, user
+- Codex `apply_patch` -> Gemini declaration -> native `apply_patch_call`
+- `apply_patch_call_output` round-trip as tool output
+- Malformed upstream SSE produces `response.failed` rather than false completion
+- Proxy-generated compaction summary round-trip via a proxy-owned compatibility envelope
+- Opaque provider-specific encrypted content is not forwarded to Gemini
 - DeepSeek Responses pass-through remains isolated from Gemini normalization
 - Model-name routing
 - `/v1/models`
+- HTTP-level Responses routing
 - Configurable compaction model
 - Windows startup helper without storing API keys
+- Repository regression scan for obvious secrets and personal paths
 
 ## External real-API evidence from 2026-09-03
 
@@ -34,7 +44,7 @@ The same run could not re-test the second turn after a network change blocked di
 
 ## Current CI
 
-The repository CI has already passed on Python 3.13 after the multi-provider routing changes. New commits continue to trigger the same test job.
+The repository CI runs the same pytest suite on Python 3.13. Recent regression runs have passed after tool mapping and security-test changes.
 
 ## Remaining acceptance
 
@@ -42,7 +52,7 @@ The only validation that cannot be completed from the GitHub connector is the us
 
 1. Gemini real API second-turn function-call continuation
 2. Actual Codex CLI 0.153.0-alpha.5 coding-agent E2E with shell/file changes
-3. Real compaction initiated by Codex
+3. Real compaction initiated by Codex and followed by a continuation turn
 4. Final comparison against the user's existing DeepSeek setup
 
 See `docs/E2E_CHECKLIST.md` for the exact final test sequence.
