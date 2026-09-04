@@ -17,11 +17,7 @@ def _text_content(content: Any) -> str:
             if isinstance(part, str):
                 chunks.append(part)
             elif isinstance(part, dict) and part.get("type") in {
-                "text",
-                "input_text",
-                "output_text",
-                "reasoning_text",
-                "summary_text",
+                "text", "input_text", "output_text", "reasoning_text", "summary_text",
             }:
                 chunks.append(str(part.get("text", "")))
         return "".join(chunks)
@@ -51,7 +47,8 @@ def decode_proxy_compaction(value: Any) -> str | None:
 
 
 def _signature(item: dict[str, Any]) -> str | None:
-    return item.get("thought_signature") or item.get("thoughtSignature")
+    value = item.get("thought_signature") or item.get("thoughtSignature")
+    return str(value) if value else None
 
 
 def _tool_name(tool: dict[str, Any]) -> str | None:
@@ -172,46 +169,46 @@ def tool_output_types(
 ) -> dict[str, str]:
     result: dict[str, str] = {}
     for tool in tools or []:
-        name = _tool_name(tool)
-        if not name:
+        tool_name = _tool_name(tool)
+        if not tool_name:
             continue
         typ = str(tool.get("type", "function"))
         if typ in ("local_shell", "local_shell_call", "command_execution", "commandExecution"):
-            result[name] = "local_shell_call"
+            result[tool_name] = "local_shell_call"
         elif typ in ("shell", "shell_call"):
-            result[name] = "shell_call"
+            result[tool_name] = "shell_call"
         elif typ in ("apply_patch", "apply_patch_call"):
-            result[name] = "apply_patch_call"
+            result[tool_name] = "apply_patch_call"
         elif typ in ("function", "None"):
-            result[name] = "function_call"
+            result[tool_name] = "function_call"
         elif typ in ("file_change", "fileChange"):
-            result[name] = "file_change"
+            result[tool_name] = "file_change"
         else:
-            result[name] = "function_call"
-    for name in mcp_metadata or {}:
-        result[name] = "mcp_call"
+            result[tool_name] = "function_call"
+    for tool_name in mcp_metadata or {}:
+        result[tool_name] = "mcp_call"
     return result
 
 
 def _tool_call(item: dict[str, Any]) -> tuple[str, str, Any, str | None, dict[str, Any] | None]:
     typ = str(item.get("type") or "")
     call_id = str(item.get("call_id") or item.get("id") or "")
-    name = str(item.get("name") or "")
+    tool_name = str(item.get("name") or "")
     args: Any = item.get("arguments") or item.get("input") or {}
     tool_metadata: dict[str, Any] | None = None
 
     if typ == "mcp_call":
         server_label = str(item.get("server_label", "mcp"))
         original_name = str(item.get("name", "tool"))
-        name = f"mcp__{server_label}__{original_name}"
+        tool_name = f"mcp__{server_label}__{original_name}"
         tool_metadata = {
             "type": "mcp_call",
             "server_label": server_label,
             "original_name": original_name,
         }
 
-    if not name:
-        name = {
+    if not tool_name:
+        tool_name = {
             "commandExecution": "run_shell_command",
             "local_shell_call": "local_shell_command",
             "shell_call": "shell_command",
@@ -256,7 +253,7 @@ def _tool_call(item: dict[str, Any]) -> tuple[str, str, Any, str | None, dict[st
     elif not args and typ == "web_search_call":
         args = item.get("action") or {}
 
-    return call_id, name, args, _signature(item), tool_metadata
+    return call_id, tool_name, args, _signature(item), tool_metadata
 
 
 def normalize_responses_request(data: dict[str, Any]) -> dict[str, Any]:
@@ -295,9 +292,9 @@ def normalize_responses_request(data: dict[str, Any]) -> dict[str, Any]:
             continue
 
         if typ == "mcp_list_tools":
-            declarations, metadata = _mcp_declarations(item)
+            declarations, tool_metadata = _mcp_declarations(item)
             mcp_declarations.extend(declarations)
-            mcp_metadata.update(metadata)
+            mcp_metadata.update(tool_metadata)
             continue
 
         if typ == "reasoning":
@@ -306,35 +303,35 @@ def normalize_responses_request(data: dict[str, Any]) -> dict[str, Any]:
             reasoning = "\n".join(part for part in (summary, content) if part)
             sig = _signature(item)
             if reasoning or sig:
-                msg: dict[str, Any] = {"role": "assistant", "content": "", "reasoning_content": reasoning}
+                reasoning_msg: dict[str, Any] = {"role": "assistant", "content": "", "reasoning_content": reasoning}
                 if sig:
-                    msg["thought_signature"] = sig
-                messages.append(msg)
+                    reasoning_msg["thought_signature"] = sig
+                messages.append(reasoning_msg)
             continue
 
         if typ in ("message", "agentMessage", ""):
             role = str(item.get("role") or "user")
             if role == "developer":
                 role = "system"
-            raw_content = item.get("content", item.get("text", ""))
-            text = _text_content(raw_content)
+            content = item.get("content", item.get("text", ""))
+            text = _text_content(content)
             reasoning = ""
-            if isinstance(raw_content, list):
+            if isinstance(content, list):
                 reasoning = "".join(
                     str(part.get("text", ""))
-                    for part in raw_content
+                    for part in content
                     if isinstance(part, dict) and part.get("type") == "reasoning_text"
                 )
             reasoning += str(item.get("reasoning_content") or "")
             sig = _signature(item)
             if role in ("assistant", "model"):
-                msg = {"role": "assistant", "content": text}
+                assistant_msg: dict[str, Any] = {"role": "assistant", "content": text}
                 if reasoning:
-                    msg["reasoning_content"] = reasoning
+                    assistant_msg["reasoning_content"] = reasoning
                 if sig:
-                    msg["thought_signature"] = sig
+                    assistant_msg["thought_signature"] = sig
                 if text or reasoning or sig:
-                    messages.append(msg)
+                    messages.append(assistant_msg)
             elif text:
                 messages.append({"role": role, "content": text})
             continue
@@ -350,14 +347,14 @@ def normalize_responses_request(data: dict[str, Any]) -> dict[str, Any]:
             "web_search_call",
             "mcp_call",
         }:
-            call_id, name, args, sig, tool_metadata = _tool_call(item)
-            if tool_metadata is not None:
-                mcp_metadata[name] = tool_metadata
+            call_id, tool_name, args, sig, item_metadata = _tool_call(item)
+            if item_metadata is not None:
+                mcp_metadata[tool_name] = item_metadata
             if call_id:
-                function_names[call_id] = name
+                function_names[call_id] = tool_name
                 if sig:
                     function_signatures[call_id] = sig
-            fc: dict[str, Any] = {"name": name, "args": args, "id": call_id}
+            fc: dict[str, Any] = {"name": tool_name, "args": args, "id": call_id}
             if sig:
                 fc["thought_signature"] = sig
             messages.append({"role": "assistant", "function_call": fc})
@@ -372,7 +369,7 @@ def normalize_responses_request(data: dict[str, Any]) -> dict[str, Any]:
                     {
                         "role": "tool",
                         "tool_call_id": call_id,
-                        "name": name,
+                        "name": tool_name,
                         "thought_signature": sig,
                         "content": str(result_value or ""),
                     }
@@ -390,7 +387,7 @@ def normalize_responses_request(data: dict[str, Any]) -> dict[str, Any]:
             "tool",
         }:
             call_id = str(item.get("call_id") or item.get("id") or "")
-            name = str(item.get("name") or function_names.get(call_id, "tool"))
+            tool_name = str(item.get("name") or function_names.get(call_id, "tool"))
             output = item.get("output", item.get("content", item.get("stdout", "")))
             if typ in ("local_shell_call_output", "shell_call_output") and not output:
                 output = item.get("stderr", "")
@@ -400,7 +397,7 @@ def normalize_responses_request(data: dict[str, Any]) -> dict[str, Any]:
                 {
                     "role": "tool",
                     "tool_call_id": call_id,
-                    "name": name,
+                    "name": tool_name,
                     "thought_signature": function_signatures.get(call_id),
                     "content": str(output or ""),
                 }
