@@ -6,7 +6,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
 from .config import config
-from .exceptions import ProxyError
+from .exceptions import ProviderError, ProxyError
 from .normalizer import encode_proxy_compaction, normalize_responses_request
 from .providers.deepseek import DeepSeekProvider
 from .providers.gemini import GeminiProvider
@@ -146,7 +146,10 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
             timeout=(config.request_timeout_connect, config.request_timeout_read),
         ) as resp:
             if resp.status_code != 200:
-                raise ProxyError(f"Gemini compaction returned HTTP {resp.status_code}: {resp.text[:500]}")
+                raise ProviderError(
+                    f"Gemini compaction returned HTTP {resp.status_code}: {resp.text[:500]}",
+                    status_code=resp.status_code,
+                )
             payload = resp.json()
         texts: list[str] = []
         for candidate in payload.get("candidates", []):
