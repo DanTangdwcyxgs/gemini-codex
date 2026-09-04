@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from typing import Any
 
 from .config import config
 from .exceptions import ProxyError
@@ -24,11 +25,26 @@ def provider_for_model(model: str):
     raise ProxyError(f"Unsupported model provider for '{model}'. Use a deepseek-* or gemini-* model.")
 
 
+def _compaction_text(message: dict[str, Any]) -> str:
+    """Serialize non-text model history so compaction does not erase tool context."""
+    pieces: list[str] = []
+    if message.get("content"):
+        pieces.append(str(message["content"]))
+    if message.get("reasoning_content"):
+        pieces.append(f"[reasoning]\n{message['reasoning_content']}")
+    if message.get("function_call"):
+        pieces.append("[function_call]\n" + json.dumps(message["function_call"], ensure_ascii=False))
+    if message.get("tool_calls"):
+        pieces.append("[tool_calls]\n" + json.dumps(message["tool_calls"], ensure_ascii=False))
+    if message.get("tool_call_id"):
+        pieces.append(f"[tool_result id={message['tool_call_id']}]\n{message.get('content', '')}")
+    return "\n".join(pieces)
+
+
 class ProxyRequestHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         if self.path in ("/health", "/"):
-            payload = {"status": "ok", "models": config.models}
-            self._json(200, payload)
+            self._json(200, {"status": "ok", "models": config.models})
             return
         if self.path in ("/v1/models", "/models"):
             providers = {"deepseek": "deepseek", "gemini": "google"}
@@ -62,8 +78,7 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
             length = int(self.headers.get("Content-Length", "0"))
             if not length:
                 raise ValueError("empty request body")
-            raw = self.rfile.read(length)
-            data = json.loads(raw)
+            data = json.loads(self.rfile.read(length))
             model = data.get("model") or config.models[0]
 
             if self.path.endswith("/compact"):
@@ -73,7 +88,6 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
 
             provider = provider_for_model(model)
             if isinstance(provider, DeepSeekProvider):
-                # DeepSeek already speaks Responses. Do not rewrite or mutate its input history.
                 provider.handle_request(dict(data, model=model), self)
             else:
                 normalized = normalize_responses_request(data)
@@ -84,8 +98,7 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
         except Exception as exc:
             self._json(400, {"error": {"message": str(exc), "type": "invalid_request_error"}})
 
-    def _handle_compact(self, data: dict) -> None:
-        """Compact with a dedicated configurable Gemini model."""
+    def _handle_compact(self, data: dict[str, Any]) -> None:
         api_key = _GEMINI_PROVIDER.auth.get_api_key()
         model = config.compaction_model
         instruction = (
@@ -94,21 +107,25 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
             "unfinished work, tool results, file paths, and facts needed to continue the task."
         )
 
-        contents: list[dict] = []
+        contents: list[dict[str, Any]] = []
         for message in data.get("messages", []):
             role = message.get("role", "user")
             if role == "system":
                 continue
-            text = message.get("content", "")
-            if text:
-                contents.append(
-                    {
-                        "role": "model" if role == "assistant" else "user",
-                        "parts": [{"text": str(text)}],
-                    }
-                )
+            text = _compaction_text(message)
+            if not text:
+                continue
+            gemini_role = "model" if role == "assistant" else "user"
+            if contents and contents[-1]["role"] == gemini_role:
+                contents[-1]["parts"][0]["text"] += "\n\n" + text
+            else:
+                contents.append({"role": gemini_role, "parts": [{"text": text}]})
 
-        contents.append({"role": "user", "parts": [{"text": instruction}]})
+        if not contents or contents[-1]["role"] == "model":
+            contents.append({"role": "user", "parts": [{"text": instruction}]})
+        else:
+            contents[-1]["parts"][0]["text"] += "\n\n" + instruction
+
         body = {
             "contents": contents,
             "generationConfig": {"thinkingConfig": {"thinkingLevel": "low"}},
@@ -137,12 +154,7 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
             {
                 "object": "response",
                 "status": "completed",
-                "output": [
-                    {
-                        "type": "compaction",
-                        "encrypted_content": "".join(texts),
-                    }
-                ],
+                "output": [{"type": "compaction", "encrypted_content": "".join(texts)}],
             },
         )
 
