@@ -29,9 +29,14 @@ class GeminiProvider:
                     system_text.append(str(msg["content"]))
                 continue
             if role == "tool":
+                # GenerateContent expects function responses as a user turn.
                 contents.append({
-                    "role": "function",
-                    "parts": [{"functionResponse": {"name": msg.get("name", "tool"), "response": {"result": msg.get("content", "")}, "id": msg.get("tool_call_id")}}}],
+                    "role": "user",
+                    "parts": [{"functionResponse": {
+                        "name": msg.get("name", "tool"),
+                        "response": {"result": msg.get("content", "")},
+                        "id": msg.get("tool_call_id"),
+                    }}],
                 })
             elif "function_call" in msg:
                 fc = msg["function_call"]
@@ -39,32 +44,42 @@ class GeminiProvider:
                     args = json.loads(fc.get("args", "{}")) if isinstance(fc.get("args"), str) else fc.get("args", {})
                 except json.JSONDecodeError:
                     args = {}
-                contents.append({"role": "model", "parts": [{"functionCall": {"name": fc.get("name", ""), "args": args, "id": fc.get("id")}}]})
+                contents.append({"role": "model", "parts": [{"functionCall": {
+                    "name": fc.get("name", ""),
+                    "args": args,
+                    "id": fc.get("id"),
+                }}]})
             else:
-                contents.append({"role": "model" if role == "assistant" else "user", "parts": [{"text": str(msg.get("content", ""))}]})
+                text = str(msg.get("content", ""))
+                if text:
+                    contents.append({"role": "model" if role == "assistant" else "user", "parts": [{"text": text}]})
 
         body: dict[str, Any] = {"contents": contents}
         if system_text:
             body["systemInstruction"] = {"parts": [{"text": "\n\n".join(system_text)}]}
 
-        # Gemini 3.8 Flash uses thinking_level. Deprecated sampling knobs are omitted.
         level = str((data.get("reasoning") or {}).get("effort") or config.default_reasoning_level).lower()
         if level == "minimal":
             level = "low"
-        body["generationConfig"] = {"thinkingConfig": {"includeThoughts": True, "thinkingLevel": level}}
+        if level not in {"low", "medium", "high"}:
+            level = "medium"
+        body["generationConfig"] = {"thinkingConfig": {"thinkingLevel": level}}
 
         tools = data.get("tools") or []
         if tools:
-            declarations = []
-            for tool in tools:
-                if tool.get("name"):
-                    declarations.append(tool)
+            declarations = [tool for tool in tools if tool.get("name")]
             if declarations:
                 body["tools"] = [{"functionDeclarations": declarations}]
 
-        url = f"{config.gemini_api_public}/v1beta/models/{model}:streamGenerateContent?alt=sse&key={api_key}"
+        url = f"{config.gemini_api_public}/v1beta/models/{model}:streamGenerateContent?alt=sse"
         try:
-            with self.session.post(url, data=json_dumps(body), headers={"Content-Type": "application/json"}, stream=True, timeout=(config.request_timeout_connect, config.request_timeout_read)) as resp:
+            with self.session.post(
+                url,
+                data=json_dumps(body),
+                headers={"Content-Type": "application/json", "x-goog-api-key": api_key},
+                stream=True,
+                timeout=(config.request_timeout_connect, config.request_timeout_read),
+            ) as resp:
                 if resp.status_code != 200:
                     raise ProviderError(f"Gemini API returned HTTP {resp.status_code}: {resp.text[:500]}")
                 handler.send_response(200)
