@@ -85,6 +85,29 @@ def test_shell_function_maps_to_local_shell_call():
     assert item["action"]["working_directory"] == "workspace"
 
 
+def test_managed_shell_function_maps_to_native_shell_call():
+    raw = [
+        b'data: {"candidates":[{"content":{"parts":[{"functionCall":{"name":"shell_command","args":{"commands":["pwd","python -V"],"max_output_length":4000,"timeout_ms":5000},"id":"shell_2"}}]}}]}',
+        b'data: [DONE]',
+    ]
+    handler = DummyHandler()
+    stream_responses_loop(
+        _response(raw),
+        handler,
+        "gemini-3.8-flash",
+        458,
+        {"tool_output_types": {"shell_command": "shell_call"}},
+    )
+    events = _events(handler)
+    item = next(payload["item"] for event, payload in events if event == "response.output_item.done")
+
+    assert item["type"] == "shell_call"
+    assert item["call_id"] == "shell_2"
+    assert item["action"]["commands"] == ["pwd", "python -V"]
+    assert item["action"]["max_output_length"] == 4000
+    assert item["action"]["timeout_ms"] == 5000
+
+
 def test_apply_patch_function_maps_to_native_apply_patch_call():
     raw = [
         b'data: {"candidates":[{"content":{"parts":[{"functionCall":{"name":"apply_patch","args":{"operation":{"type":"update_file","path":"src/demo.py","diff":"@@ -1 +1 @@\\n-old\\n+new"}},"id":"patch_1"}}]}}]}',
