@@ -111,7 +111,8 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
                 normalized["model"] = model
                 provider.handle_request(normalized, self)
         except ProxyError as exc:
-            self._json(502, {"error": {"message": str(exc), "type": "proxy_error"}})
+            status = exc.status_code if hasattr(exc, "status_code") and exc.status_code in {401, 403, 408, 409, 429} else 502
+            self._json(status, {"error": {"message": str(exc), "type": "proxy_error"}})
         except Exception as exc:  # noqa: BLE001
             self._json(400, {"error": {"message": str(exc), "type": "invalid_request_error"}})
 
