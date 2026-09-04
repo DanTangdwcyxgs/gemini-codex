@@ -40,6 +40,26 @@ def _request(method, path, payload=None):
         httpd.server_close()
 
 
+def _stream_request(payload, monkeypatch):
+    monkeypatch.setattr(server_module, "_GEMINI_PROVIDER", FakeProvider())
+    httpd = server_module.ThreadingHTTPServer(("localhost", 0), ProxyRequestHandler)
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    try:
+        handler_cls = server_module._GEMINI_PROVIDER
+        monkeypatch.setattr(handler_cls, "auth", type("Auth", (), {"get_api_key": lambda self: "test-key"})())
+        conn = http.client.HTTPConnection("localhost", httpd.server_port, timeout=5)
+        conn.request("POST", "/v1/responses", body=json.dumps(payload), headers={"Content-Type": "application/json"})
+        response = conn.getresponse()
+        raw = response.read().decode("utf-8")
+        conn.close()
+        return response.status, raw
+    finally:
+        httpd.shutdown()
+        thread.join(timeout=2)
+        httpd.server_close()
+
+
 def test_http_responses_routes_and_normalizes_gemini(monkeypatch):
     gemini = FakeProvider()
     deepseek = FakeProvider()
@@ -102,6 +122,8 @@ def test_http_responses_routes_compaction_trigger_as_v2_control_signal(monkeypat
     def fake_compact_v2(self, data, requested_model):
         captured["data"] = data
         captured["model"] = requested_model
+        self.send_response(200)
+        self.end_headers()
 
     monkeypatch.setattr(ProxyRequestHandler, "_handle_compact_v2", fake_compact_v2)
 
