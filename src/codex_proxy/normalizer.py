@@ -29,6 +29,66 @@ def _signature(item: dict[str, Any]) -> str | None:
     return item.get("thought_signature") or item.get("thoughtSignature")
 
 
+def _tool_name(tool: dict[str, Any]) -> str | None:
+    fn = tool.get("function") or tool
+    if fn.get("name"):
+        return str(fn["name"])
+    typ = tool.get("type")
+    return {
+        "local_shell": "local_shell_command",
+        "command_execution": "run_shell_command",
+        "commandExecution": "run_shell_command",
+        "local_shell_call": "local_shell_command",
+        "file_change": "write_file",
+        "fileChange": "write_file",
+    }.get(typ)
+
+
+def normalize_tools(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    for tool in tools or []:
+        name = _tool_name(tool)
+        if not name:
+            continue
+        fn = tool.get("function") or tool
+        if tool.get("type") in ("function", None):
+            result.append(fn)
+            continue
+        # Built-in Codex tool descriptions do not have a Gemini schema we can preserve
+        # directly; turn them into explicit function declarations where possible.
+        parameters = fn.get("parameters") or tool.get("parameters") or {
+            "type": "object",
+            "properties": {},
+        }
+        result.append(
+            {
+                "name": name,
+                "description": fn.get("description") or tool.get("description") or name,
+                "parameters": parameters,
+            }
+        )
+    return result
+
+
+def tool_output_types(tools: list[dict[str, Any]]) -> dict[str, str]:
+    """Record which Responses item type Codex expects for built-in tools."""
+    result: dict[str, str] = {}
+    for tool in tools or []:
+        name = _tool_name(tool)
+        if not name:
+            continue
+        typ = tool.get("type", "function")
+        if typ in ("local_shell", "local_shell_call", "command_execution", "commandExecution"):
+            result[name] = "local_shell_call"
+        elif typ in ("function", None):
+            result[name] = "function_call"
+        elif typ in ("file_change", "fileChange"):
+            result[name] = "file_change"
+        else:
+            result[name] = "function_call"
+    return result
+
+
 def _tool_call(item: dict[str, Any]) -> tuple[str, str, Any, str | None]:
     typ = item.get("type")
     call_id = item.get("call_id") or item.get("id") or ""
@@ -44,17 +104,13 @@ def _tool_call(item: dict[str, Any]) -> tuple[str, str, Any, str | None]:
         }.get(typ, "tool")
 
     if not args and typ == "commandExecution":
-        args = {
-            "command": item.get("command", ""),
-            "cwd": item.get("cwd", "."),
-        }
+        args = {"command": item.get("command", ""), "cwd": item.get("cwd", ".")}
     elif not args and typ == "local_shell_call":
         action = item.get("action") or {}
         exec_data = action.get("exec") or action.get("execute") or action
         args = {
             "command": exec_data.get("command", []),
-            "working_directory": exec_data.get("working_directory")
-            or exec_data.get("cwd"),
+            "working_directory": exec_data.get("working_directory") or exec_data.get("cwd"),
         }
     elif not args and typ == "fileChange":
         changes = item.get("changes") or []
@@ -68,22 +124,12 @@ def _tool_call(item: dict[str, Any]) -> tuple[str, str, Any, str | None]:
     return call_id, name, args, _signature(item)
 
 
-def normalize_tools(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    result: list[dict[str, Any]] = []
-    for tool in tools or []:
-        if tool.get("type") != "function":
-            continue
-        fn = tool.get("function") or tool
-        if fn.get("name"):
-            result.append(fn)
-    return result
-
-
 def normalize_responses_request(data: dict[str, Any]) -> dict[str, Any]:
     """Convert OpenAI Responses input items into Gemini-oriented messages."""
     messages: list[dict[str, Any]] = []
     function_names: dict[str, str] = {}
     function_signatures: dict[str, str] = {}
+    original_tools = data.get("tools") or []
 
     instructions = data.get("instructions")
     if instructions:
@@ -97,7 +143,6 @@ def normalize_responses_request(data: dict[str, Any]) -> dict[str, Any]:
             continue
 
         typ = item.get("type")
-
         if typ in (None, "message", "agentMessage"):
             role = item.get("role", "user")
             if role == "developer":
@@ -113,7 +158,6 @@ def normalize_responses_request(data: dict[str, Any]) -> dict[str, Any]:
                 )
             reasoning += str(item.get("reasoning_content") or "")
             sig = _signature(item)
-
             if role in ("assistant", "model"):
                 msg: dict[str, Any] = {"role": "assistant", "content": text}
                 if reasoning:
@@ -139,11 +183,7 @@ def normalize_responses_request(data: dict[str, Any]) -> dict[str, Any]:
                 function_names[call_id] = name
                 if sig:
                     function_signatures[call_id] = sig
-            fc = {
-                "name": name,
-                "args": args,
-                "id": call_id,
-            }
+            fc = {"name": name, "args": args, "id": call_id}
             if sig:
                 fc["thought_signature"] = sig
             messages.append({"role": "assistant", "function_call": fc})
@@ -173,6 +213,7 @@ def normalize_responses_request(data: dict[str, Any]) -> dict[str, Any]:
 
     result = dict(data)
     result["messages"] = messages
-    result["tools"] = normalize_tools(data.get("tools") or [])
+    result["tools"] = normalize_tools(original_tools)
+    result["tool_output_types"] = tool_output_types(original_tools)
     result["model"] = data.get("model") or "gemini-3.8-flash"
     return result
