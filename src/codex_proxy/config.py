@@ -10,7 +10,7 @@ def _split_models(value: str) -> list[str]:
 
 @dataclass
 class Config:
-    host: str = field(default_factory=lambda: os.getenv("CODEX_PROXY_HOST", "127.0.0.1"))
+    host: str = field(default_factory=lambda: os.getenv("CODEX_PROXY_HOST", "localhost"))
     port: int = field(default_factory=lambda: int(os.getenv("CODEX_PROXY_PORT", "8765")))
 
     gemini_api_public: str = field(
