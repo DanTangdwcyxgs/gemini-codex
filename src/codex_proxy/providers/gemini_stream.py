@@ -36,6 +36,7 @@ def stream_responses_loop(
     usage: dict[str, Any] | None = None
     metadata = request_metadata or {}
     tool_output_types = metadata.get("tool_output_types") or {}
+    tool_output_metadata = metadata.get("tool_output_metadata") or {}
 
     def emit(event_type: str, payload: dict[str, Any]) -> None:
         nonlocal seq
@@ -134,12 +135,14 @@ def stream_responses_loop(
                 for part in iter_parts(chunk):
                     function_call = part.get("functionCall")
                     if isinstance(function_call, dict):
-                        name = str(function_call.get("name", ""))
+                        raw_name = str(function_call.get("name", ""))
+                        metadata_for_tool = tool_output_metadata.get(raw_name) or {}
+                        name = str(metadata_for_tool.get("original_name") or raw_name)
                         call_id = function_call.get("id") or f"call_{created_ts}_{next_output_index}"
                         raw_args = function_call.get("args", {})
-                        item_type = tool_output_types.get(name)
+                        item_type = tool_output_types.get(raw_name)
                         if not item_type:
-                            item_type = "local_shell_call" if name in _SHELL_NAMES else "function_call"
+                            item_type = "local_shell_call" if raw_name in _SHELL_NAMES else "function_call"
 
                         signature = part.get("thoughtSignature") or part.get("thought_signature")
                         item: dict[str, Any] = {
@@ -170,9 +173,7 @@ def stream_responses_loop(
                             item["action"] = exec_action
                         elif item_type == "shell_call":
                             args = raw_args if isinstance(raw_args, dict) else {"commands": raw_args}
-                            action: dict[str, Any] = {
-                                "commands": args.get("commands", []),
-                            }
+                            action: dict[str, Any] = {"commands": args.get("commands", [])}
                             if isinstance(action["commands"], str):
                                 action["commands"] = [action["commands"]]
                             for key in ("max_output_length", "timeout_ms"):
@@ -184,6 +185,10 @@ def stream_responses_loop(
                             if not isinstance(operation, dict):
                                 raise ValueError("apply_patch_call arguments must be an object")
                             item["operation"] = operation
+                        elif item_type == "mcp_call":
+                            item["name"] = name
+                            item["arguments"] = json.dumps(raw_args, ensure_ascii=False)
+                            item["server_label"] = metadata_for_tool.get("server_label", "mcp")
                         else:
                             item["name"] = name
                             item["arguments"] = json.dumps(raw_args, ensure_ascii=False)
