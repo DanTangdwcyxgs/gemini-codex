@@ -167,9 +167,7 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
             timeout=(config.request_timeout_connect, config.request_timeout_read),
         ) as resp:
             if resp.status_code != 200:
-                raise ProxyError(
-                    f"Gemini compaction returned HTTP {resp.status_code}: {resp.text[:500]}"
-                )
+                raise ProxyError(f"Gemini compaction returned HTTP {resp.status_code}: {resp.text[:500]}")
             payload = resp.json()
 
         texts: list[str] = []
@@ -217,45 +215,13 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
                 "created_at": created_ts,
                 **payload,
             }
-            self.wfile.write(
-                f"event: {event_type}\ndata: {json.dumps(event, ensure_ascii=False)}\n\n".encode()
-            )
+            self.wfile.write(f"event: {event_type}\ndata: {json.dumps(event, ensure_ascii=False)}\n\n".encode())
             self.wfile.flush()
 
-        emit(
-            "response.created",
-            {
-                "response": {
-                    "id": response_id,
-                    "object": "response",
-                    "model": requested_model,
-                    "status": "in_progress",
-                    "output": [],
-                }
-            },
-        )
-        emit(
-            "response.output_item.added",
-            {"response_id": response_id, "output_index": 0, "item": item},
-        )
-        emit(
-            "response.output_item.done",
-            {"response_id": response_id, "output_index": 0, "item": item},
-        )
-        emit(
-            "response.completed",
-            {
-                "response": {
-                    "id": response_id,
-                    "object": "response",
-                    "status": "completed",
-                    "model": requested_model,
-                    "created_at": created_ts,
-                    "output": [item],
-                    "usage": {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0},
-                }
-            },
-        )
+        emit("response.created", {"response": {"id": response_id, "object": "response", "model": requested_model, "status": "in_progress", "output": []}})
+        emit("response.output_item.added", {"response_id": response_id, "output_index": 0, "item": item})
+        emit("response.output_item.done", {"response_id": response_id, "output_index": 0, "item": item})
+        emit("response.completed", {"response": {"id": response_id, "object": "response", "status": "completed", "model": requested_model, "created_at": created_ts, "output": [item], "usage": {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}}})
 
     def _json(self, status: int, payload: dict) -> None:
         body = json.dumps(payload, ensure_ascii=False).encode()
