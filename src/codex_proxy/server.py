@@ -45,7 +45,6 @@ def validate_compaction_trigger(data: dict[str, Any]) -> None:
 
 
 def _compaction_text(message: dict[str, Any]) -> str:
-    """Serialize non-text model history so compaction does not erase tool context."""
     pieces: list[str] = []
     if message.get("content"):
         pieces.append(str(message["content"]))
@@ -205,6 +204,8 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
 
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("X-Accel-Buffering", "no")
         self.send_header("Connection", "keep-alive")
         self.end_headers()
 
@@ -258,19 +259,3 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
 
     def _json(self, status: int, payload: dict) -> None:
         body = json.dumps(payload, ensure_ascii=False).encode()
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
-
-    def log_message(self, fmt: str, *args) -> None:
-        return
-
-
-def run_server() -> None:
-    server = ThreadingHTTPServer((config.host, config.port), ProxyRequestHandler)
-    try:
-        server.serve_forever()
-    finally:
-        server.server_close()
