@@ -27,7 +27,13 @@ The adapter handles the important differences between Codex/OpenAI Responses and
 - Gemini `thoughtSignature` is preserved across function-call turns
 - function-call `name`, `id`, and `call_id` survive the round trip
 - Responses `output_index` values remain stable across reasoning, tool, and message items
-- tool schemas are normalized before being sent to Gemini
+- Codex `local_shell` is converted to a Gemini function declaration and returned as a native `local_shell_call`
+- `local_shell_call_output` is reconstructed as a Gemini `functionResponse` on the next turn
+- Codex `apply_patch` / `apply_patch_call` is represented as a native `apply_patch_call` response item
+- malformed or interrupted Gemini streams produce `response.failed` instead of a false `response.completed`
+- proxy-generated compaction summaries are wrapped in a private `gemini-codex-v1:` compatibility envelope so the same proxy can safely restore them later
+
+The last compaction item is intentionally not treated as real OpenAI encryption. Opaque encrypted content from another provider is not forwarded to Gemini because Gemini cannot decrypt provider-specific ciphertext.
 
 ## Models
 
@@ -97,6 +103,6 @@ codex --profile gemini
 python -m pytest -q
 ```
 
-CI runs the same pytest suite on Python 3.13.
+The test suite includes protocol, stream, tool-call, compaction, security-scan, model-routing, and HTTP-level regression coverage. CI runs the same pytest suite on Python 3.13.
 
 For the final real-machine acceptance test, see `docs/E2E_CHECKLIST.md`.
