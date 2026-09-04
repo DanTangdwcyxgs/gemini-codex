@@ -31,10 +31,7 @@ def normalize_function_tools(tools: list[dict[str, Any]]) -> list[dict[str, Any]
     declarations: list[dict[str, Any]] = []
     for tool in tools or []:
         nested = tool.get("function")
-        if isinstance(nested, dict):
-            fn = nested
-        else:
-            fn = tool
+        fn = nested if isinstance(nested, dict) else tool
         name = fn.get("name")
         if not name:
             continue

@@ -41,7 +41,7 @@ src = ["src"]
 
 [tool.ruff.lint]
 select = ["E4", "E7", "E9", "F", "UP", "RUF", "SIM"]
-ignore = ["RUF012", "UP035"]
+ignore = ["RUF012", "RUF100", "UP035"]
 
 [tool.mypy]
 ignore_missing_imports = true
