@@ -12,11 +12,7 @@ class GeminiChunk:
 
 
 def unwrap_gemini_chunk(data: Dict[str, Any]) -> GeminiChunk:
-    """Accept both public Gemini and legacy/internal wrapped response shapes.
-
-    Public Gemini streaming emits ``candidates`` and ``usageMetadata`` at the
-    top level. Some internal endpoints wrap those fields under ``response``.
-    """
+    """Accept both public Gemini and legacy/internal wrapped response shapes."""
     response = data.get("response")
     if isinstance(response, dict):
         candidates = response.get("candidates")
@@ -46,13 +42,16 @@ def usage_to_responses_usage(usage: Optional[Dict[str, Any]]) -> Optional[Dict[s
         usage.get("thoughtsTokenCount", usage.get("thinkingTokenCount", 0)) or 0
     )
     cached_tokens = int(usage.get("cachedContentTokenCount", 0) or 0)
+    total_tokens = int(
+        usage.get("totalTokenCount", input_tokens + output_tokens + reasoning_tokens) or 0
+    )
 
     return {
         "input_tokens": input_tokens,
         "input_tokens_details": {"cached_tokens": cached_tokens},
         "output_tokens": output_tokens,
         "output_tokens_details": {"reasoning_tokens": reasoning_tokens},
-        "total_tokens": input_tokens + output_tokens + reasoning_tokens,
+        "total_tokens": total_tokens,
     }
 
 
