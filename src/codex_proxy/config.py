@@ -60,6 +60,9 @@ class Config:
     debug_mode: bool = field(
         default_factory=lambda: os.getenv("CODEX_PROXY_DEBUG", "false").lower() == "true"
     )
+    log_level: str = field(
+        default_factory=lambda: os.getenv("CODEX_PROXY_LOG_LEVEL", "INFO").upper()
+    )
 
 
 config = Config()
