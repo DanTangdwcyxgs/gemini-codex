@@ -3,7 +3,7 @@
 
 [model_providers.gemini-proxy]
 name = "gemini-proxy"
-base_url = "http://127.0.0.1:8765/v1"
+base_url = "http://localhost:8765/v1"
 wire_api = "responses"
 experimental_bearer_token = "local-proxy"
 
