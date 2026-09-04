@@ -53,6 +53,24 @@ def stream_responses_loop(
         )
         handler.wfile.flush()
 
+    def emit_failed(exc: Exception, code: str = "proxy_stream_error") -> None:
+        emit(
+            "response.failed",
+            {
+                "response_id": response_id,
+                "response": {
+                    "id": response_id,
+                    "object": "response",
+                    "status": "failed",
+                    "model": model,
+                    "created_at": created_ts,
+                    "output": output,
+                    "usage": usage,
+                    "error": {"code": code, "message": str(exc)[:1000]},
+                },
+            },
+        )
+
     def ensure_reasoning() -> tuple[dict[str, Any], int]:
         nonlocal reasoning_item, reasoning_index, next_output_index
         if reasoning_item is None:
@@ -102,109 +120,114 @@ def stream_responses_loop(
         },
     )
 
-    for line in resp.iter_lines():
-        if not line or not line.startswith(b"data: ") or line == b"data: [DONE]":
-            continue
-        try:
-            data = json.loads(line[6:])
-            chunk = unwrap_gemini_chunk(data)
-            mapped_usage = usage_to_responses_usage(chunk.usage)
-            if mapped_usage:
-                usage = mapped_usage
+    try:
+        for line in resp.iter_lines():
+            if not line or not line.startswith(b"data: ") or line == b"data: [DONE]":
+                continue
+            try:
+                data = json.loads(line[6:])
+                chunk = unwrap_gemini_chunk(data)
+                mapped_usage = usage_to_responses_usage(chunk.usage)
+                if mapped_usage:
+                    usage = mapped_usage
 
-            for part in iter_parts(chunk):
-                function_call = part.get("functionCall")
-                if isinstance(function_call, dict):
-                    name = str(function_call.get("name", ""))
-                    call_id = function_call.get("id") or f"call_{created_ts}_{next_output_index}"
-                    raw_args = function_call.get("args", {})
-                    item_type = tool_output_types.get(name)
-                    if not item_type:
-                        item_type = "local_shell_call" if name in _SHELL_NAMES else "function_call"
+                for part in iter_parts(chunk):
+                    function_call = part.get("functionCall")
+                    if isinstance(function_call, dict):
+                        name = str(function_call.get("name", ""))
+                        call_id = function_call.get("id") or f"call_{created_ts}_{next_output_index}"
+                        raw_args = function_call.get("args", {})
+                        item_type = tool_output_types.get(name)
+                        if not item_type:
+                            item_type = "local_shell_call" if name in _SHELL_NAMES else "function_call"
 
-                    item: dict[str, Any] = {
-                        "id": call_id,
-                        "type": item_type,
-                        "status": "completed",
-                        "name": name,
-                        "arguments": json.dumps(raw_args, ensure_ascii=False),
-                        "call_id": call_id,
-                    }
-                    signature = part.get("thoughtSignature") or part.get("thought_signature")
-                    if signature:
-                        item["thought_signature"] = signature
-
-                    if item_type == "local_shell_call":
-                        args = raw_args if isinstance(raw_args, dict) else {"command": raw_args}
-                        command = args.get("command", [])
-                        if isinstance(command, str):
-                            command = [command]
-                        exec_action: dict[str, Any] = {
-                            "type": "exec",
-                            "command": command,
-                            "env": args.get("env", {}) or {},
+                        item: dict[str, Any] = {
+                            "id": call_id,
+                            "type": item_type,
+                            "status": "completed",
+                            "name": name,
+                            "arguments": json.dumps(raw_args, ensure_ascii=False),
+                            "call_id": call_id,
                         }
-                        working_directory = args.get("working_directory") or args.get("cwd")
-                        if working_directory:
-                            exec_action["working_directory"] = working_directory
-                        for key in ("timeout_ms", "user"):
-                            if args.get(key) is not None:
-                                exec_action[key] = args[key]
-                        item["action"] = exec_action
+                        signature = part.get("thoughtSignature") or part.get("thought_signature")
+                        if signature:
+                            item["thought_signature"] = signature
 
-                    idx = next_output_index
-                    next_output_index += 1
-                    emit(
-                        "response.output_item.added",
-                        {"response_id": response_id, "output_index": idx, "item": item},
-                    )
-                    emit(
-                        "response.output_item.done",
-                        {"response_id": response_id, "output_index": idx, "item": item},
-                    )
-                    output.append(item)
-                    continue
+                        if item_type == "local_shell_call":
+                            args = raw_args if isinstance(raw_args, dict) else {"command": raw_args}
+                            command = args.get("command", [])
+                            if isinstance(command, str):
+                                command = [command]
+                            exec_action: dict[str, Any] = {
+                                "type": "exec",
+                                "command": command,
+                                "env": args.get("env", {}) or {},
+                            }
+                            working_directory = args.get("working_directory") or args.get("cwd")
+                            if working_directory:
+                                exec_action["working_directory"] = working_directory
+                            for key in ("timeout_ms", "user"):
+                                if args.get(key) is not None:
+                                    exec_action[key] = args[key]
+                            item["action"] = exec_action
 
-                text = part.get("text")
-                thought = part.get("thought")
-                signature = part.get("thoughtSignature") or part.get("thought_signature")
+                        idx = next_output_index
+                        next_output_index += 1
+                        emit(
+                            "response.output_item.added",
+                            {"response_id": response_id, "output_index": idx, "item": item},
+                        )
+                        emit(
+                            "response.output_item.done",
+                            {"response_id": response_id, "output_index": idx, "item": item},
+                        )
+                        output.append(item)
+                        continue
 
-                if thought is True or isinstance(thought, str):
-                    thought_text = text if thought is True else thought
-                    if thought_text:
-                        item, idx = ensure_reasoning()
-                        item["content"][0]["text"] += thought_text
+                    text = part.get("text")
+                    thought = part.get("thought")
+                    signature = part.get("thoughtSignature") or part.get("thought_signature")
+
+                    if thought is True or isinstance(thought, str):
+                        thought_text = text if thought is True else thought
+                        if thought_text:
+                            item, idx = ensure_reasoning()
+                            item["content"][0]["text"] += thought_text
+                            if signature:
+                                item["thought_signature"] = signature
+                            emit(
+                                "response.reasoning_text.delta",
+                                {
+                                    "response_id": response_id,
+                                    "item_id": item["id"],
+                                    "output_index": idx,
+                                    "content_index": 0,
+                                    "delta": thought_text,
+                                },
+                            )
+                        continue
+
+                    if text:
+                        item, idx = ensure_message()
+                        item["content"][0]["text"] += text
                         if signature:
                             item["thought_signature"] = signature
                         emit(
-                            "response.reasoning_text.delta",
+                            "response.output_text.delta",
                             {
                                 "response_id": response_id,
                                 "item_id": item["id"],
                                 "output_index": idx,
                                 "content_index": 0,
-                                "delta": thought_text,
+                                "delta": text,
                             },
                         )
-                    continue
-
-                if text:
-                    item, idx = ensure_message()
-                    item["content"][0]["text"] += text
-                    if signature:
-                        item["thought_signature"] = signature
-                    emit(
-                        "response.output_text.delta",
-                        {
-                            "response_id": response_id,
-                            "item_id": item["id"],
-                            "output_index": idx,
-                            "content_index": 0,
-                            "delta": text,
-                        },
-                    )
-        except Exception:
-            continue
+            except Exception as exc:
+                emit_failed(exc, "invalid_upstream_chunk")
+                return
+    except Exception as exc:
+        emit_failed(exc)
+        return
 
     if reasoning_item is not None and reasoning_index is not None:
         reasoning_item["status"] = "completed"
