@@ -77,4 +77,5 @@ def test_shell_function_maps_to_local_shell_call():
     assert item["call_id"] == "shell_1"
     assert item["action"]["type"] == "exec"
     assert item["action"]["command"] == ["python", "-c", "print(42)"]
+    assert item["action"]["env"] == {}
     assert item["action"]["working_directory"] == "workspace"
