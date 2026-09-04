@@ -69,11 +69,7 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
             self._json(200, {
                 "object": "list",
                 "data": [
-                    {
-                        "id": model,
-                        "object": "model",
-                        "owned_by": providers.get(model.split("-", 1)[0], "proxy"),
-                    }
+                    {"id": model, "object": "model", "owned_by": providers.get(model.split("-", 1)[0], "proxy")}
                     for model in config.models
                 ],
             })
@@ -122,8 +118,7 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
     def _compact_with_gemini(self, data: dict[str, Any]) -> str:
         api_key = _GEMINI_PROVIDER.auth.get_api_key()
         model = config.compaction_model
-        instruction = (data.get("instructions") or "Summarize the conversation for a coding agent. Preserve decisions, constraints, unfinished work, tool results, file paths, and facts needed to continue the task.")
-
+        instruction = data.get("instructions") or "Summarize the conversation for a coding agent. Preserve decisions, constraints, unfinished work, tool results, file paths, and facts needed to continue the task."
         contents: list[dict[str, Any]] = []
         for message in data.get("messages", []):
             role = message.get("role", "user")
@@ -137,19 +132,21 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
                 contents[-1]["parts"][0]["text"] += "\n\n" + text
             else:
                 contents.append({"role": gemini_role, "parts": [{"text": text}]})
-
         if not contents or contents[-1]["role"] == "model":
             contents.append({"role": "user", "parts": [{"text": instruction}]})
         else:
             contents[-1]["parts"][0]["text"] += "\n\n" + instruction
-
         body = {"contents": contents, "generationConfig": {"thinkingConfig": {"thinkingLevel": "low"}}}
         url = f"{config.gemini_api_public}/v1beta/models/{model}:generateContent"
-        with _GEMINI_PROVIDER.session.post(url, data=json.dumps(body, ensure_ascii=False), headers={"Content-Type": "application/json", "x-goog-api-key": api_key}, timeout=(config.request_timeout_connect, config.request_timeout_read)) as resp:
+        with _GEMINI_PROVIDER.session.post(
+            url,
+            data=json.dumps(body, ensure_ascii=False),
+            headers={"Content-Type": "application/json", "x-goog-api-key": api_key},
+            timeout=(config.request_timeout_connect, config.request_timeout_read),
+        ) as resp:
             if resp.status_code != 200:
                 raise ProxyError(f"Gemini compaction returned HTTP {resp.status_code}: {resp.text[:500]}")
             payload = resp.json()
-
         texts: list[str] = []
         for candidate in payload.get("candidates", []):
             for part in (candidate.get("content") or {}).get("parts", []):
@@ -167,19 +164,16 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
         created_ts = int(time.time())
         response_id = f"resp_compact_{created_ts}"
         item = {"id": f"cmp_{created_ts}", "type": "compaction", "status": "completed", "encrypted_content": encoded}
-
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream; charset=utf-8")
         self.send_header("Cache-Control", "no-cache")
         self.send_header("X-Accel-Buffering", "no")
         self.send_header("Connection", "keep-alive")
         self.end_headers()
-
         def emit(event_type: str, payload: dict[str, Any]) -> None:
             event = {"id": f"evt_{created_ts}_{event_type}", "object": "response.event", "type": event_type, "created_at": created_ts, **payload}
             self.wfile.write(f"event: {event_type}\ndata: {json.dumps(event, ensure_ascii=False)}\n\n".encode())
             self.wfile.flush()
-
         emit("response.created", {"response": {"id": response_id, "object": "response", "model": requested_model, "status": "in_progress", "output": []}})
         emit("response.output_item.added", {"response_id": response_id, "output_index": 0, "item": item})
         emit("response.output_item.done", {"response_id": response_id, "output_index": 0, "item": item})
