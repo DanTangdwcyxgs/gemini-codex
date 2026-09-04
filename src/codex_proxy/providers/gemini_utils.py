@@ -27,11 +27,12 @@ def sanitize_params(params: Any) -> Any:
 
 
 def normalize_function_tools(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Convert Responses-style function tools to Gemini declarations."""
+    """Convert flat or legacy nested Responses function tools to Gemini declarations."""
     declarations: list[dict[str, Any]] = []
     for tool in tools or []:
-        if tool.get("type") == "function":
-            fn = tool.get("function") or {}
+        nested = tool.get("function")
+        if isinstance(nested, dict):
+            fn = nested
         else:
             fn = tool
         name = fn.get("name")
