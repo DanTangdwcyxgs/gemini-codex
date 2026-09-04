@@ -9,10 +9,9 @@ Codex CLI
    |
    | OpenAI Responses API
    v
-127.0.0.1:8765
+localhost:8765
    |
    +-- deepseek-* --> https://api.deepseek.com/responses
-   |
    `-- gemini-*   --> Google Gemini native GenerateContent SSE
 ```
 
@@ -62,16 +61,16 @@ CODEX_PROXY_DEEPSEEK_MODEL=deepseek-v4-flash
 Server:
 
 ```text
-CODEX_PROXY_HOST=127.0.0.1
+CODEX_PROXY_HOST=localhost
 CODEX_PROXY_PORT=8765
 ```
 
 ## Windows
 
-Store the Gemini key outside Git, for example:
+Store the Gemini key outside Git, for example in a local file such as:
 
 ```text
-geminikey\geminiapikey.txt
+<your-local-key-file>
 ```
 
 Then start the proxy:
