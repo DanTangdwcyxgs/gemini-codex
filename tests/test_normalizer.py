@@ -43,7 +43,7 @@ def test_local_shell_tool_gets_realistic_gemini_schema_and_round_trips_output():
                 "action": {
                     "type": "exec",
                     "command": ["python", "-V"],
-                    "working_directory": "C:/repo",
+                    "working_directory": "workspace",
                     "env": {"MODE": "test"},
                 },
             },
@@ -62,6 +62,57 @@ def test_local_shell_tool_gets_realistic_gemini_schema_and_round_trips_output():
     assert normalized["messages"][0]["function_call"]["args"]["env"] == {"MODE": "test"}
     assert normalized["messages"][1]["tool_call_id"] == "shell_1"
     assert normalized["messages"][1]["content"] == "Python 3.x"
+
+
+def test_managed_shell_call_and_output_use_current_responses_shapes():
+    data = {
+        "model": "gemini-3.8-flash",
+        "tools": [{"type": "shell"}],
+        "input": [
+            {
+                "type": "shell_call",
+                "id": "shell_2",
+                "call_id": "shell_2",
+                "action": {
+                    "commands": ["pwd", "python -V"],
+                    "max_output_length": 4000,
+                    "timeout_ms": 5000,
+                },
+            },
+            {
+                "type": "shell_call_output",
+                "call_id": "shell_2",
+                "output": [{"stdout": "Python 3.x", "stderr": "", "outcome": {"type": "exit", "exit_code": 0}}],
+            },
+        ],
+    }
+    normalized = normalize_responses_request(data)
+    assert normalized["tool_output_types"]["shell_command"] == "shell_call"
+    assert normalized["messages"][0]["function_call"]["args"]["commands"] == ["pwd", "python -V"]
+    assert normalized["messages"][0]["function_call"]["args"]["timeout_ms"] == 5000
+    assert normalized["messages"][1]["tool_call_id"] == "shell_2"
+    assert "Python 3.x" in normalized["messages"][1]["content"]
+
+
+def test_reasoning_item_is_not_dropped_from_history():
+    normalized = normalize_responses_request(
+        {
+            "model": "gemini-3.8-flash",
+            "input": [
+                {
+                    "type": "reasoning",
+                    "summary": [{"type": "summary_text", "text": "checked the failing test"}],
+                }
+            ],
+        }
+    )
+    assert normalized["messages"] == [
+        {
+            "role": "assistant",
+            "content": "",
+            "reasoning_content": "",
+        }
+    ]
 
 
 def test_apply_patch_tool_uses_native_operation_shape():
