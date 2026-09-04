@@ -3,6 +3,7 @@ import json
 import threading
 
 import codex_proxy.server as server_module
+from codex_proxy.exceptions import ProviderError
 from codex_proxy.server import ProxyRequestHandler
 
 
@@ -181,6 +182,23 @@ def test_compaction_v2_emits_exactly_one_compaction_output_item(monkeypatch):
     assert len(completed["output"]) == 1
     assert completed["output"][0]["type"] == "compaction"
     assert completed["output"][0]["encrypted_content"].startswith("gemini-codex-v1:")
+
+
+def test_upstream_provider_429_is_returned_as_429(monkeypatch):
+    class RateLimitedProvider:
+        def handle_request(self, data, handler):
+            raise ProviderError("Gemini API returned HTTP 429: quota exhausted", status_code=429)
+
+    monkeypatch.setattr(server_module, "_GEMINI_PROVIDER", RateLimitedProvider())
+    status, body = _request(
+        "POST",
+        "/v1/responses",
+        {"model": "gemini-3.8-flash", "input": [{"role": "user", "content": "hello"}]},
+    )
+
+    assert status == 429
+    assert body["error"]["type"] == "proxy_error"
+    assert "quota exhausted" in body["error"]["message"]
 
 
 def test_health_and_models_endpoints_expose_configured_models():
