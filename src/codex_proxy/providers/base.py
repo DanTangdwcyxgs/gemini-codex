@@ -7,7 +7,7 @@ class BaseProvider(ABC):
     """Abstract base class for AI model providers."""
 
     @abstractmethod
-    def handle_request(self, self_data: Dict[str, Any], handler: BaseHTTPRequestHandler) -> None:
+    def handle_request(self, data: Dict[str, Any], handler: BaseHTTPRequestHandler) -> None:
         """Process a standard request and write to the handler's wfile."""
         pass
 
