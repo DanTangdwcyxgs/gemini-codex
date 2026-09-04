@@ -64,6 +64,8 @@ def _tool_name(tool: dict[str, Any]) -> str | None:
         "local_shell_call": "local_shell_command",
         "file_change": "write_file",
         "fileChange": "write_file",
+        "apply_patch": "apply_patch",
+        "apply_patch_call": "apply_patch",
     }.get(typ)
 
 
@@ -92,6 +94,22 @@ def _builtin_parameters(tool: dict[str, Any], name: str) -> dict[str, Any]:
                 "changes": {"type": "array"},
             },
             "required": ["file_path"],
+        }
+    if name == "apply_patch":
+        return {
+            "type": "object",
+            "properties": {
+                "operation": {
+                    "type": "object",
+                    "properties": {
+                        "type": {"type": "string", "enum": ["create_file", "delete_file", "update_file"]},
+                        "path": {"type": "string"},
+                        "diff": {"type": "string"},
+                    },
+                    "required": ["type", "path"],
+                }
+            },
+            "required": ["operation"],
         }
     return {"type": "object", "properties": {}}
 
@@ -126,6 +144,8 @@ def tool_output_types(tools: list[dict[str, Any]]) -> dict[str, str]:
         typ = tool.get("type", "function")
         if typ in ("local_shell", "local_shell_call", "command_execution", "commandExecution"):
             result[name] = "local_shell_call"
+        elif typ in ("apply_patch", "apply_patch_call"):
+            result[name] = "apply_patch_call"
         elif typ in ("function", None):
             result[name] = "function_call"
         elif typ in ("file_change", "fileChange"):
@@ -167,11 +187,14 @@ def _tool_call(item: dict[str, Any]) -> tuple[str, str, Any, str | None]:
         }
         args = {key: value for key, value in args.items() if value is not None}
     elif not args and typ in ("fileChange", "apply_patch_call"):
-        changes = item.get("changes") or item.get("operations") or []
-        args = {
-            "file_path": item.get("file_path") or (changes[0].get("path", "") if changes else ""),
-            "changes": changes,
-        }
+        if typ == "apply_patch_call":
+            args = item.get("operation") or {}
+        else:
+            changes = item.get("changes") or []
+            args = {
+                "file_path": item.get("file_path") or (changes[0].get("path", "") if changes else ""),
+                "changes": changes,
+            }
     elif not args and typ == "web_search_call":
         args = item.get("action") or {}
 
