@@ -151,7 +151,10 @@ class GeminiProvider:
                 timeout=(config.request_timeout_connect, config.request_timeout_read),
             ) as resp:
                 if resp.status_code != 200:
-                    raise ProviderError(f"Gemini API returned HTTP {resp.status_code}: {resp.text[:500]}")
+                    raise ProviderError(
+                        f"Gemini API returned HTTP {resp.status_code}: {resp.text[:500]}",
+                        status_code=resp.status_code,
+                    )
                 handler.send_response(200)
                 handler.send_header("Content-Type", "text/event-stream; charset=utf-8")
                 handler.send_header("Cache-Control", "no-cache")
