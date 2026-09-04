@@ -124,6 +124,26 @@ def _builtin_parameters(tool: dict[str, Any], name: str) -> dict[str, Any]:
     return {"type": "object", "properties": {}}
 
 
+def _mcp_declarations(item: dict[str, Any]) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
+    server_label = str(item.get("server_label", "mcp"))
+    declarations: list[dict[str, Any]] = []
+    metadata: dict[str, dict[str, Any]] = {}
+    for tool in item.get("tools") or []:
+        if not isinstance(tool, dict) or not tool.get("name"):
+            continue
+        name = f"mcp__{server_label}__{tool['name']}"
+        schema = tool.get("input_schema") or {"type": "object", "properties": {}}
+        declarations.append(
+            {
+                "name": name,
+                "description": tool.get("description") or str(tool["name"]),
+                "parameters": schema,
+            }
+        )
+        metadata[name] = {"type": "mcp_call", "server_label": server_label, "original_name": str(tool["name"])}
+    return declarations, metadata
+
+
 def normalize_tools(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
     result: list[dict[str, Any]] = []
     for tool in tools or []:
@@ -142,7 +162,7 @@ def normalize_tools(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return result
 
 
-def tool_output_types(tools: list[dict[str, Any]]) -> dict[str, str]:
+def tool_output_types(tools: list[dict[str, Any]], mcp_metadata: dict[str, dict[str, Any]] | None = None) -> dict[str, str]:
     result: dict[str, str] = {}
     for tool in tools or []:
         name = _tool_name(tool)
@@ -161,14 +181,23 @@ def tool_output_types(tools: list[dict[str, Any]]) -> dict[str, str]:
             result[name] = "file_change"
         else:
             result[name] = "function_call"
+    for name in mcp_metadata or {}:
+        result[name] = "mcp_call"
     return result
 
 
-def _tool_call(item: dict[str, Any]) -> tuple[str, str, Any, str | None]:
+def _tool_call(item: dict[str, Any]) -> tuple[str, str, Any, str | None, dict[str, Any] | None]:
     typ = item.get("type")
     call_id = item.get("call_id") or item.get("id") or ""
     name = item.get("name") or ""
     args: Any = item.get("arguments") or item.get("input") or {}
+    tool_metadata: dict[str, Any] | None = None
+
+    if typ == "mcp_call":
+        server_label = str(item.get("server_label", "mcp"))
+        original_name = str(item.get("name", "tool"))
+        name = f"mcp__{server_label}__{original_name}"
+        tool_metadata = {"type": "mcp_call", "server_label": server_label, "original_name": original_name}
 
     if not name:
         name = {
@@ -209,13 +238,14 @@ def _tool_call(item: dict[str, Any]) -> tuple[str, str, Any, str | None]:
     elif not args and typ == "web_search_call":
         args = item.get("action") or {}
 
-    return call_id, name, args, _signature(item)
+    return call_id, name, args, _signature(item), tool_metadata
 
 
 def normalize_responses_request(data: dict[str, Any]) -> dict[str, Any]:
     messages: list[dict[str, Any]] = []
     function_names: dict[str, str] = {}
     function_signatures: dict[str, str] = {}
+    mcp_metadata: dict[str, dict[str, Any]] = {}
     original_tools = data.get("tools") or []
 
     instructions = data.get("instructions")
@@ -230,9 +260,6 @@ def normalize_responses_request(data: dict[str, Any]) -> dict[str, Any]:
             continue
 
         typ = item.get("type")
-
-        # Control-only marker: Codex uses this to request/record a compaction boundary;
-        # it is not conversational content and Gemini must not receive it as a message.
         if typ == "compaction_trigger":
             continue
 
@@ -244,6 +271,11 @@ def normalize_responses_request(data: dict[str, Any]) -> dict[str, Any]:
                 text = _text_content(item.get("content"))
                 if text:
                     messages.append({"role": "user", "content": "[prior compaction summary]\n" + text})
+            continue
+
+        if typ == "mcp_list_tools":
+            declarations, metadata = _mcp_declarations(item)
+            mcp_metadata.update(metadata)
             continue
 
         if typ == "reasoning":
@@ -287,9 +319,11 @@ def normalize_responses_request(data: dict[str, Any]) -> dict[str, Any]:
 
         if typ in (
             "function_call", "custom_tool_call", "commandExecution", "local_shell_call",
-            "shell_call", "fileChange", "apply_patch_call", "web_search_call",
+            "shell_call", "fileChange", "apply_patch_call", "web_search_call", "mcp_call",
         ):
-            call_id, name, args, sig = _tool_call(item)
+            call_id, name, args, sig, metadata = _tool_call(item)
+            if metadata:
+                mcp_metadata[name] = metadata
             if call_id:
                 function_names[call_id] = name
                 if sig:
@@ -303,7 +337,7 @@ def normalize_responses_request(data: dict[str, Any]) -> dict[str, Any]:
         if typ in (
             "function_call_output", "custom_tool_call_output", "commandExecutionOutput",
             "local_shell_call_output", "shell_call_output", "fileChangeOutput",
-            "apply_patch_call_output", "tool",
+            "apply_patch_call_output", "tool", "mcp_call_output",
         ):
             call_id = item.get("call_id") or item.get("id") or ""
             name = item.get("name") or function_names.get(call_id, "tool")
@@ -320,9 +354,17 @@ def normalize_responses_request(data: dict[str, Any]) -> dict[str, Any]:
                 "content": str(output or ""),
             })
 
+    gemini_tools = normalize_tools(original_tools)
+    for item in data.get("input") or []:
+        if isinstance(item, dict) and item.get("type") == "mcp_list_tools":
+            declarations, metadata = _mcp_declarations(item)
+            gemini_tools.extend(declarations)
+            mcp_metadata.update(metadata)
+
     result = dict(data)
     result["messages"] = messages
-    result["tools"] = normalize_tools(original_tools)
-    result["tool_output_types"] = tool_output_types(original_tools)
+    result["tools"] = gemini_tools
+    result["tool_output_types"] = tool_output_types(original_tools, mcp_metadata)
+    result["tool_output_metadata"] = mcp_metadata
     result["model"] = data.get("model") or "gemini-3.8-flash"
     return result
