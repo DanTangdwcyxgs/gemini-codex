@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from typing import Any
 
 from ..config import config
@@ -16,12 +15,9 @@ class DeepSeekProvider:
 
     def handle_request(self, data: dict[str, Any], handler: Any) -> None:
         if not config.deepseek_api_key:
-            raise AuthenticationError(
-                "CODEX_PROXY_DEEPSEEK_API_KEY is not set."
-            )
+            raise AuthenticationError("CODEX_PROXY_DEEPSEEK_API_KEY is not set.")
 
         body = dict(data)
-        # DeepSeek Responses is stateless; Codex history is already present in input.
         body.pop("_headers", None)
         body.pop("previous_response_id", None)
         body.pop("messages", None)
@@ -51,11 +47,19 @@ class DeepSeekProvider:
                 handler.send_header("Content-Type", "text/event-stream; charset=utf-8")
                 handler.send_header("Connection", "keep-alive")
                 handler.end_headers()
+
+                event_lines: list[bytes] = []
                 for line in resp.iter_lines():
                     if line:
-                        handler.wfile.write(line + b"\n")
-                        handler.wfile.write(b"\n")
+                        event_lines.append(line)
+                        continue
+                    if event_lines:
+                        handler.wfile.write(b"\n".join(event_lines) + b"\n\n")
                         handler.wfile.flush()
+                        event_lines = []
+                if event_lines:
+                    handler.wfile.write(b"\n".join(event_lines) + b"\n\n")
+                    handler.wfile.flush()
         except (ProviderError, AuthenticationError):
             raise
         except Exception as exc:
