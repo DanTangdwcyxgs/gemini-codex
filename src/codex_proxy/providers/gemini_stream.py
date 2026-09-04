@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import time
-from http.server import BaseHTTPRequestHandler
 from typing import Any
 
 from .gemini_response import iter_parts, unwrap_gemini_chunk, usage_to_responses_usage
