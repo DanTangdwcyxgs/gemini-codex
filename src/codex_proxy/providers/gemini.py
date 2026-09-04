@@ -49,18 +49,26 @@ class GeminiProvider:
         content = msg.get("content", "")
         signature = msg.get("thought_signature") or msg.get("thoughtSignature")
         reasoning = msg.get("reasoning_content")
+        has_string_text = isinstance(content, str) and bool(content)
+        has_list_text = isinstance(content, list) and any(
+            isinstance(cp, dict) and cp.get("type") in ("text", "input_text", "output_text") and cp.get("text")
+            for cp in content
+        )
+        has_text_content = has_string_text or has_list_text
+
         if reasoning:
             thought_part: dict[str, Any] = {"text": reasoning, "thought": True}
-            if signature:
+            if signature and not has_text_content:
                 thought_part["thoughtSignature"] = signature
             parts.append(thought_part)
 
-        if isinstance(content, str) and content:
+        if has_string_text:
             text_part: dict[str, Any] = {"text": content}
             if signature:
                 text_part["thoughtSignature"] = signature
             parts.append(text_part)
         elif isinstance(content, list):
+            text_indexes: list[int] = []
             for cp in content:
                 if not isinstance(cp, dict):
                     continue
@@ -70,6 +78,9 @@ class GeminiProvider:
                     if sig:
                         part["thoughtSignature"] = sig
                     parts.append(part)
+                    text_indexes.append(len(parts) - 1)
+            if signature and text_indexes and not any("thoughtSignature" in parts[index] for index in text_indexes):
+                parts[text_indexes[-1]]["thoughtSignature"] = signature
 
         if signature and not parts:
             parts.append({"text": "", "thoughtSignature": signature})
