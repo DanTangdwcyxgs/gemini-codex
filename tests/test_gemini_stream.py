@@ -67,7 +67,7 @@ def test_stream_preserves_function_signature_and_unique_output_indices():
 
     completed = next(payload["response"] for event, payload in events if event == "response.completed")
     assert completed["usage"]["total_tokens"] == 20
-    assert [item["type"] for item in completed["output"]] == ["reasoning", "message", "function_call"]
+    assert [item["type"] for item in completed["output"]] == ["function_call", "reasoning", "message"]
 
 
 def test_stream_preserves_standalone_final_thought_signature():
