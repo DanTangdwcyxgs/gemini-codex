@@ -66,30 +66,22 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
             return
         if self.path in ("/v1/models", "/models"):
             providers = {"deepseek": "deepseek", "gemini": "google"}
-            self._json(
-                200,
-                {
-                    "object": "list",
-                    "data": [
-                        {
-                            "id": model,
-                            "object": "model",
-                            "owned_by": providers.get(model.split("-", 1)[0], "proxy"),
-                        }
-                        for model in config.models
-                    ],
-                },
-            )
+            self._json(200, {
+                "object": "list",
+                "data": [
+                    {
+                        "id": model,
+                        "object": "model",
+                        "owned_by": providers.get(model.split("-", 1)[0], "proxy"),
+                    }
+                    for model in config.models
+                ],
+            })
             return
         self.send_error(404)
 
     def do_POST(self) -> None:
-        if self.path not in (
-            "/v1/responses",
-            "/responses",
-            "/v1/responses/compact",
-            "/responses/compact",
-        ):
+        if self.path not in ("/v1/responses", "/responses", "/v1/responses/compact", "/responses/compact"):
             self.send_error(404)
             return
         try:
@@ -130,11 +122,7 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
     def _compact_with_gemini(self, data: dict[str, Any]) -> str:
         api_key = _GEMINI_PROVIDER.auth.get_api_key()
         model = config.compaction_model
-        instruction = (
-            data.get("instructions")
-            or "Summarize the conversation for a coding agent. Preserve decisions, constraints, "
-            "unfinished work, tool results, file paths, and facts needed to continue the task."
-        )
+        instruction = (data.get("instructions") or "Summarize the conversation for a coding agent. Preserve decisions, constraints, unfinished work, tool results, file paths, and facts needed to continue the task.")
 
         contents: list[dict[str, Any]] = []
         for message in data.get("messages", []):
@@ -155,17 +143,9 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
         else:
             contents[-1]["parts"][0]["text"] += "\n\n" + instruction
 
-        body = {
-            "contents": contents,
-            "generationConfig": {"thinkingConfig": {"thinkingLevel": "low"}},
-        }
+        body = {"contents": contents, "generationConfig": {"thinkingConfig": {"thinkingLevel": "low"}}}
         url = f"{config.gemini_api_public}/v1beta/models/{model}:generateContent"
-        with _GEMINI_PROVIDER.session.post(
-            url,
-            data=json.dumps(body, ensure_ascii=False),
-            headers={"Content-Type": "application/json", "x-goog-api-key": api_key},
-            timeout=(config.request_timeout_connect, config.request_timeout_read),
-        ) as resp:
+        with _GEMINI_PROVIDER.session.post(url, data=json.dumps(body, ensure_ascii=False), headers={"Content-Type": "application/json", "x-goog-api-key": api_key}, timeout=(config.request_timeout_connect, config.request_timeout_read)) as resp:
             if resp.status_code != 200:
                 raise ProxyError(f"Gemini compaction returned HTTP {resp.status_code}: {resp.text[:500]}")
             payload = resp.json()
@@ -179,26 +159,14 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
 
     def _handle_compact(self, data: dict[str, Any]) -> None:
         summary = self._compact_with_gemini(data)
-        self._json(
-            200,
-            {
-                "object": "response",
-                "status": "completed",
-                "output": [{"type": "compaction", "encrypted_content": encode_proxy_compaction(summary)}],
-            },
-        )
+        self._json(200, {"object": "response", "status": "completed", "output": [{"type": "compaction", "encrypted_content": encode_proxy_compaction(summary)}]})
 
     def _handle_compact_v2(self, data: dict[str, Any], requested_model: str) -> None:
         summary = self._compact_with_gemini(data)
         encoded = encode_proxy_compaction(summary)
         created_ts = int(time.time())
         response_id = f"resp_compact_{created_ts}"
-        item = {
-            "id": f"cmp_{created_ts}",
-            "type": "compaction",
-            "status": "completed",
-            "encrypted_content": encoded,
-        }
+        item = {"id": f"cmp_{created_ts}", "type": "compaction", "status": "completed", "encrypted_content": encoded}
 
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream; charset=utf-8")
@@ -208,13 +176,7 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
         def emit(event_type: str, payload: dict[str, Any]) -> None:
-            event = {
-                "id": f"evt_{created_ts}_{event_type}",
-                "object": "response.event",
-                "type": event_type,
-                "created_at": created_ts,
-                **payload,
-            }
+            event = {"id": f"evt_{created_ts}_{event_type}", "object": "response.event", "type": event_type, "created_at": created_ts, **payload}
             self.wfile.write(f"event: {event_type}\ndata: {json.dumps(event, ensure_ascii=False)}\n\n".encode())
             self.wfile.flush()
 
@@ -225,3 +187,19 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
 
     def _json(self, status: int, payload: dict) -> None:
         body = json.dumps(payload, ensure_ascii=False).encode()
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+
+def run_server() -> None:
+    server = ThreadingHTTPServer((config.host, config.port), ProxyRequestHandler)
+    print(f"Codex Gemini proxy listening on {config.host}:{config.port}")
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.server_close()
