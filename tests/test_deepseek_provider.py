@@ -16,8 +16,11 @@ class DummyResponse:
 
     def iter_lines(self):
         return [
-            b'data: {"type":"response.completed","response":{"id":"resp_ds"}}',
-            b'data: [DONE]',
+            b'event: response.output_item.done',
+            b'data: {"type":"response.output_item.done","response":{"id":"resp_ds"}}',
+            b"",
+            b"data: [DONE]",
+            b"",
         ]
 
 
@@ -85,3 +88,17 @@ def test_deepseek_forwards_native_responses_request(monkeypatch):
     assert body["stream"] is True
     assert "previous_response_id" not in body
     assert "messages" not in body
+
+
+def test_deepseek_preserves_multiline_sse_event_boundaries(monkeypatch):
+    monkeypatch.setattr(config, "deepseek_api_key", "test-key")
+    provider = DeepSeekProvider()
+    provider.session = DummySession()
+    handler = DummyHandler()
+
+    provider.handle_request({"model": "deepseek-v4-flash", "input": []}, handler)
+    output = handler.wfile.data
+
+    assert b"event: response.output_item.done\ndata: {" in output
+    assert b"event: response.output_item.done\n\ndata:" not in output
+    assert output.endswith(b"data: [DONE]\n\n")
