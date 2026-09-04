@@ -31,6 +31,7 @@ The adapter handles the important differences between Codex/OpenAI Responses and
 - `local_shell_call_output` is reconstructed as a Gemini `functionResponse` on the next turn
 - Codex `apply_patch` / `apply_patch_call` is represented as a native `apply_patch_call` response item
 - malformed or interrupted Gemini streams produce `response.failed` instead of a false `response.completed`
+- relevant Gemini upstream HTTP errors such as `401`, `403`, `408`, `409`, and `429` are preserved at the proxy boundary for clearer authentication/quota diagnostics
 - proxy-generated compaction summaries are wrapped in a private `gemini-codex-v1:` compatibility envelope so the same proxy can safely restore them later
 
 The last compaction item is intentionally not treated as real OpenAI encryption. Opaque encrypted content from another provider is not forwarded to Gemini because Gemini cannot decrypt provider-specific ciphertext.
