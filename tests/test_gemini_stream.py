@@ -25,7 +25,7 @@ def _events(handler):
     for chunk in chunks:
         lines = chunk.splitlines()
         if len(lines) >= 2:
-            result.append((lines[0][len("event: "):], json.loads(lines[1][len("data: "):])) )
+            result.append((lines[0][len("event: ") :], json.loads(lines[1][len("data: ") :])))
     return result
 
 
@@ -56,7 +56,11 @@ def test_stream_preserves_function_signature_and_unique_output_indices():
     assert done_items[0]["type"] == "function_call"
     assert done_items[0]["thought_signature"] == signature
 
-    indices = [payload["output_index"] for event, payload in events if event in ("response.output_item.added", "response.output_item.done")]
+    indices = [
+        payload["output_index"]
+        for event, payload in events
+        if event in ("response.output_item.added", "response.output_item.done")
+    ]
     assert indices == [0, 0, 1, 2, 1, 2]
 
     completed = next(payload["response"] for event, payload in events if event == "response.completed")
@@ -79,3 +83,18 @@ def test_shell_function_maps_to_local_shell_call():
     assert item["action"]["command"] == ["python", "-c", "print(42)"]
     assert item["action"]["env"] == {}
     assert item["action"]["working_directory"] == "workspace"
+
+
+def test_invalid_upstream_chunk_emits_failed_not_completed():
+    raw = [
+        b'data: {"candidates":[{"content":{"parts":[{"text":"before failure"}]}}]}',
+        b'data: {invalid-json',
+    ]
+    handler = DummyHandler()
+    stream_responses_loop(_response(raw), handler, "gemini-3.8-flash", 789)
+    events = _events(handler)
+
+    assert any(event == "response.failed" for event, _ in events)
+    assert not any(event == "response.completed" for event, _ in events)
+    failed = next(payload["response"] for event, payload in events if event == "response.failed")
+    assert failed["error"]["code"] == "invalid_upstream_chunk"
