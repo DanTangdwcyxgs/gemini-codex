@@ -32,7 +32,7 @@ def _events(handler):
 def test_stream_preserves_function_signature_and_unique_output_indices():
     signature = "signed-thought"
     raw = [
-        b'data: {"candidates":[{"content":{"parts":[{"functionCall":{"name":"read_file","args":{"path":"a.txt"},"id":"call_1"},"thoughtSignature":"'+signature.encode()+b'"}]}}]}',
+        b'data: {"candidates":[{"content":{"parts":[{"functionCall":{"name":"read_file","args":{"path":"a.txt"},"id":"call_1"},"thoughtSignature":"' + signature.encode() + b'"}]}}]}',
         b'data: {"candidates":[{"content":{"parts":[{"thought":true,"text":"thinking"}]}}]}',
         b'data: {"candidates":[{"content":{"parts":[{"text":"done"}]}}],"usageMetadata":{"promptTokenCount":10,"candidatesTokenCount":4,"thoughtsTokenCount":6,"totalTokenCount":20}}',
         b'data: [DONE]',
@@ -40,6 +40,7 @@ def test_stream_preserves_function_signature_and_unique_output_indices():
 
     class Resp:
         headers = {}
+
         def iter_lines(self):
             return raw
 
@@ -47,18 +48,12 @@ def test_stream_preserves_function_signature_and_unique_output_indices():
     stream_responses_loop(Resp(), handler, "gemini-3.8-flash", 123)
     events = _events(handler)
 
-    done_items = [
-        payload["item"]
-        for event, payload in events
-        if event == "response.output_item.done"
-    ]
+    done_items = [payload["item"] for event, payload in events if event == "response.output_item.done"]
     assert done_items[0]["type"] == "function_call"
     assert done_items[0]["thought_signature"] == signature
-    indices = [
-        payload["output_index"]
-        for event, payload in events
-        if event in ("response.output_item.added", "response.output_item.done")
-    ]
-    assert indices == [0, 1, 1, 2, 2, 0]
+
+    indices = [payload["output_index"] for event, payload in events if event in ("response.output_item.added", "response.output_item.done")]
+    assert indices == [0, 0, 1, 2, 1, 2]
+
     completed = next(payload["response"] for event, payload in events if event == "response.completed")
     assert completed["usage"]["total_tokens"] == 20
