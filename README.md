@@ -76,26 +76,40 @@ CODEX_PROXY_PORT=8765
 Store the Gemini key outside Git, for example in a local file such as:
 
 ```text
-<your-local-key-file>
+C:\path\to\gemini-api-key.txt
 ```
 
-Then start the proxy:
+Then start the proxy with the key file explicitly:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\proxy_start.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\proxy_start.ps1 -ApiKeyFile C:\path\to\gemini-api-key.txt
 ```
 
 The script reads the key, sets the environment variable for the current proxy process, and never writes the key to the repository.
 
 ## Codex profile
 
-Copy `codex_gemini_profile.toml.example` into `%USERPROFILE%\.codex\config.toml` while keeping the existing DeepSeek configuration intact.
+The current Codex CLI profile format keeps the provider block in `%USERPROFILE%\.codex\config.toml` and puts the selected model/auth settings in a separate `%USERPROFILE%\.codex\gemini.config.toml` file. Do not use the removed legacy `[profiles.gemini]` table.
 
-Then use:
+Add this provider block to `%USERPROFILE%\.codex\config.toml` while keeping the existing DeepSeek configuration intact:
+
+```toml
+[model_providers.gemini-proxy]
+name = "gemini-proxy"
+base_url = "http://127.0.0.1:8765/v1"
+wire_api = "responses"
+experimental_bearer_token = "local-proxy"
+```
+
+Then copy `gemini.config.toml.example` to `%USERPROFILE%\.codex\gemini.config.toml`.
+
+Use:
 
 ```text
 codex --profile gemini
 ```
+
+A local `models.json` entry may also be needed for Codex builds that do not know the Gemini model metadata yet.
 
 ## Testing
 
@@ -103,6 +117,6 @@ codex --profile gemini
 python -m pytest -q
 ```
 
-The test suite includes protocol, stream, tool-call, compaction, security-scan, model-routing, and HTTP-level regression coverage. CI runs the same pytest suite on Python 3.13.
+The repository test suite covers protocol, stream, tool-call, compaction, security-scan, model-routing, and HTTP-level regression behavior. CI runs the same pytest suite on Python 3.13.
 
-For the final real-machine acceptance test, see `docs/E2E_CHECKLIST.md`.
+For final real-machine acceptance, see `docs/E2E_CHECKLIST.md` and the latest local results in `docs/E2E_RESULTS_2026-09-04.md`.
