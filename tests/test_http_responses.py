@@ -40,26 +40,6 @@ def _request(method, path, payload=None):
         httpd.server_close()
 
 
-def _stream_request(payload, monkeypatch):
-    monkeypatch.setattr(server_module, "_GEMINI_PROVIDER", FakeProvider())
-    httpd = server_module.ThreadingHTTPServer(("localhost", 0), ProxyRequestHandler)
-    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
-    thread.start()
-    try:
-        handler_cls = server_module._GEMINI_PROVIDER
-        monkeypatch.setattr(handler_cls, "auth", type("Auth", (), {"get_api_key": lambda self: "test-key"})())
-        conn = http.client.HTTPConnection("localhost", httpd.server_port, timeout=5)
-        conn.request("POST", "/v1/responses", body=json.dumps(payload), headers={"Content-Type": "application/json"})
-        response = conn.getresponse()
-        raw = response.read().decode("utf-8")
-        conn.close()
-        return response.status, raw
-    finally:
-        httpd.shutdown()
-        thread.join(timeout=2)
-        httpd.server_close()
-
-
 def test_http_responses_routes_and_normalizes_gemini(monkeypatch):
     gemini = FakeProvider()
     deepseek = FakeProvider()
@@ -148,6 +128,59 @@ def test_http_responses_routes_compaction_trigger_as_v2_control_signal(monkeypat
     ]
     assert gemini.requests == []
     assert deepseek.requests == []
+
+
+def test_compaction_v2_emits_exactly_one_compaction_output_item(monkeypatch):
+    class DummyWFile:
+        def __init__(self):
+            self.data = b""
+
+        def write(self, data):
+            self.data += data
+
+        def flush(self):
+            pass
+
+    class DummyHandler:
+        def __init__(self):
+            self.wfile = DummyWFile()
+            self.headers = []
+
+        def _compact_with_gemini(self, data):
+            return "summary text"
+
+        def send_response(self, status):
+            self.status = status
+
+        def send_header(self, key, value):
+            self.headers.append((key, value))
+
+        def end_headers(self):
+            pass
+
+    handler = DummyHandler()
+    ProxyRequestHandler._handle_compact_v2(
+        handler,
+        {"messages": [{"role": "user", "content": "hello"}]},
+        "gemini-3.8-flash",
+    )
+    assert handler.status == 200
+    assert dict(handler.headers)["Content-Type"].startswith("text/event-stream")
+
+    frames = handler.wfile.data.decode().strip().split("\n\n")
+    events = [json.loads(frame.splitlines()[1][len("data: "):]) for frame in frames]
+    types = [event["type"] for event in events]
+    assert types == [
+        "response.created",
+        "response.output_item.added",
+        "response.output_item.done",
+        "response.completed",
+    ]
+
+    completed = events[-1]["response"]
+    assert len(completed["output"]) == 1
+    assert completed["output"][0]["type"] == "compaction"
+    assert completed["output"][0]["encrypted_content"].startswith("gemini-codex-v1:")
 
 
 def test_health_and_models_endpoints_expose_configured_models():
