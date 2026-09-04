@@ -1,4 +1,8 @@
-from codex_proxy.normalizer import normalize_responses_request
+from codex_proxy.normalizer import (
+    decode_proxy_compaction,
+    encode_proxy_compaction,
+    normalize_responses_request,
+)
 
 
 def test_function_call_and_result_keep_name_call_id_and_signature():
@@ -58,3 +62,23 @@ def test_local_shell_tool_gets_realistic_gemini_schema_and_round_trips_output():
     assert normalized["messages"][0]["function_call"]["args"]["env"] == {"MODE": "test"}
     assert normalized["messages"][1]["tool_call_id"] == "shell_1"
     assert normalized["messages"][1]["content"] == "Python 3.x"
+
+
+def test_proxy_compaction_is_round_trip_safe_and_opaque_provider_ciphertext_is_dropped():
+    summary = "keep the selected files and continue the unfinished shell test"
+    encoded = encode_proxy_compaction(summary)
+    assert encoded.startswith("gemini-codex-v1:")
+    assert decode_proxy_compaction(encoded) == summary
+    assert decode_proxy_compaction("opaque-provider-ciphertext") is None
+
+    normalized = normalize_responses_request(
+        {"model": "gemini-3.8-flash", "input": [{"type": "compaction", "encrypted_content": encoded}]}
+    )
+    assert normalized["messages"] == [
+        {"role": "user", "content": "[prior compaction summary]\n" + summary}
+    ]
+
+    opaque = normalize_responses_request(
+        {"model": "gemini-3.8-flash", "input": [{"type": "compaction", "encrypted_content": "opaque-provider-ciphertext"}]}
+    )
+    assert opaque["messages"] == []
