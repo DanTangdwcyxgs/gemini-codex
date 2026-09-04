@@ -168,6 +168,17 @@ def stream_responses_loop(
                                 if args.get(key) is not None:
                                     exec_action[key] = args[key]
                             item["action"] = exec_action
+                        elif item_type == "shell_call":
+                            args = raw_args if isinstance(raw_args, dict) else {"commands": raw_args}
+                            action: dict[str, Any] = {
+                                "commands": args.get("commands", []),
+                            }
+                            if isinstance(action["commands"], str):
+                                action["commands"] = [action["commands"]]
+                            for key in ("max_output_length", "timeout_ms"):
+                                if args.get(key) is not None:
+                                    action[key] = args[key]
+                            item["action"] = action
                         elif item_type == "apply_patch_call":
                             operation = raw_args.get("operation", raw_args) if isinstance(raw_args, dict) else raw_args
                             if not isinstance(operation, dict):
