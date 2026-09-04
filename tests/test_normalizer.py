@@ -64,6 +64,37 @@ def test_local_shell_tool_gets_realistic_gemini_schema_and_round_trips_output():
     assert normalized["messages"][1]["content"] == "Python 3.x"
 
 
+def test_apply_patch_tool_uses_native_operation_shape():
+    data = {
+        "model": "gemini-3.8-flash",
+        "tools": [{"type": "apply_patch"}],
+        "input": [
+            {
+                "type": "apply_patch_call",
+                "id": "patch_1",
+                "call_id": "patch_1",
+                "operation": {
+                    "type": "update_file",
+                    "path": "src/demo.py",
+                    "diff": "@@ -1 +1 @@\n-old\n+new",
+                },
+            },
+            {
+                "type": "apply_patch_call_output",
+                "call_id": "patch_1",
+                "output": "updated",
+            },
+        ],
+    }
+    normalized = normalize_responses_request(data)
+    schema = normalized["tools"][0]["parameters"]
+    assert schema["required"] == ["operation"]
+    assert normalized["tool_output_types"]["apply_patch"] == "apply_patch_call"
+    assert normalized["messages"][0]["function_call"]["args"]["type"] == "update_file"
+    assert normalized["messages"][0]["function_call"]["args"]["path"] == "src/demo.py"
+    assert normalized["messages"][1]["tool_call_id"] == "patch_1"
+
+
 def test_proxy_compaction_is_round_trip_safe_and_opaque_provider_ciphertext_is_dropped():
     summary = "keep the selected files and continue the unfinished shell test"
     encoded = encode_proxy_compaction(summary)
