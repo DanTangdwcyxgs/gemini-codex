@@ -55,6 +55,8 @@ def test_stream_preserves_function_signature_and_unique_output_indices():
     done_items = [payload["item"] for event, payload in events if event == "response.output_item.done"]
     assert done_items[0]["type"] == "function_call"
     assert done_items[0]["thought_signature"] == signature
+    assert any(event == "response.function_call_arguments.delta" for event, _ in events)
+    assert any(event == "response.function_call_arguments.done" for event, _ in events)
 
     indices = [
         payload["output_index"]
@@ -65,6 +67,22 @@ def test_stream_preserves_function_signature_and_unique_output_indices():
 
     completed = next(payload["response"] for event, payload in events if event == "response.completed")
     assert completed["usage"]["total_tokens"] == 20
+    assert [item["type"] for item in completed["output"]] == ["reasoning", "message", "function_call"]
+
+
+def test_stream_preserves_standalone_final_thought_signature():
+    signature = "final-signature"
+    raw = [
+        b'data: {"candidates":[{"content":{"parts":[{"text":"answer"}]}}]}',
+        b'data: {"candidates":[{"content":{"parts":[{"text":"","thoughtSignature":"' + signature.encode() + b'"}]}}]}',
+        b'data: [DONE]',
+    ]
+    handler = DummyHandler()
+    stream_responses_loop(_response(raw), handler, "gemini-3.8-flash", 124)
+    events = _events(handler)
+    completed = next(payload["response"] for event, payload in events if event == "response.completed")
+    message = next(item for item in completed["output"] if item["type"] == "message")
+    assert message["thought_signature"] == signature
 
 
 def test_shell_function_maps_to_local_shell_call():
