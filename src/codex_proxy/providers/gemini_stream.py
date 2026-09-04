@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import time
+from http.server import BaseHTTPRequestHandler
 from typing import Any
 
 from .gemini_response import iter_parts, unwrap_gemini_chunk, usage_to_responses_usage
@@ -88,7 +89,9 @@ def stream_responses_loop(
                 "response.output_item.added",
                 {"response_id": response_id, "output_index": reasoning_index, "item": reasoning_item},
             )
-        return reasoning_item, reasoning_index  # type: ignore[arg-type]
+        assert reasoning_item is not None
+        assert reasoning_index is not None
+        return reasoning_item, reasoning_index
 
     def ensure_message() -> tuple[dict[str, Any], int]:
         nonlocal message_item, message_index, next_output_index
@@ -106,7 +109,9 @@ def stream_responses_loop(
                 "response.output_item.added",
                 {"response_id": response_id, "output_index": message_index, "item": message_item},
             )
-        return message_item, message_index  # type: ignore[arg-type]
+        assert message_item is not None
+        assert message_index is not None
+        return message_item, message_index
 
     emit(
         "response.created",

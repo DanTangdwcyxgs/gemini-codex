@@ -69,7 +69,7 @@ def _tool_name(tool: dict[str, Any]) -> str | None:
         "fileChange": "write_file",
         "apply_patch": "apply_patch",
         "apply_patch_call": "apply_patch",
-    }.get(tool.get("type"))
+    }.get(str(tool.get("type") or ""))
 
 
 def _builtin_parameters(tool: dict[str, Any], name: str) -> dict[str, Any]:
@@ -175,14 +175,14 @@ def tool_output_types(
         name = _tool_name(tool)
         if not name:
             continue
-        typ = tool.get("type", "function")
+        typ = str(tool.get("type", "function"))
         if typ in ("local_shell", "local_shell_call", "command_execution", "commandExecution"):
             result[name] = "local_shell_call"
         elif typ in ("shell", "shell_call"):
             result[name] = "shell_call"
         elif typ in ("apply_patch", "apply_patch_call"):
             result[name] = "apply_patch_call"
-        elif typ in ("function", None):
+        elif typ in ("function", "None"):
             result[name] = "function_call"
         elif typ in ("file_change", "fileChange"):
             result[name] = "file_change"
@@ -194,9 +194,9 @@ def tool_output_types(
 
 
 def _tool_call(item: dict[str, Any]) -> tuple[str, str, Any, str | None, dict[str, Any] | None]:
-    typ = item.get("type")
-    call_id = item.get("call_id") or item.get("id") or ""
-    name = item.get("name") or ""
+    typ = str(item.get("type") or "")
+    call_id = str(item.get("call_id") or item.get("id") or "")
+    name = str(item.get("name") or "")
     args: Any = item.get("arguments") or item.get("input") or {}
     tool_metadata: dict[str, Any] | None = None
 
@@ -280,7 +280,7 @@ def normalize_responses_request(data: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(item, dict):
             continue
 
-        typ = item.get("type")
+        typ = str(item.get("type") or "")
         if typ == "compaction_trigger":
             continue
 
@@ -306,18 +306,14 @@ def normalize_responses_request(data: dict[str, Any]) -> dict[str, Any]:
             reasoning = "\n".join(part for part in (summary, content) if part)
             sig = _signature(item)
             if reasoning or sig:
-                msg: dict[str, Any] = {
-                    "role": "assistant",
-                    "content": "",
-                    "reasoning_content": reasoning,
-                }
+                msg: dict[str, Any] = {"role": "assistant", "content": "", "reasoning_content": reasoning}
                 if sig:
                     msg["thought_signature"] = sig
                 messages.append(msg)
             continue
 
-        if typ in (None, "message", "agentMessage"):
-            role = item.get("role", "user")
+        if typ in ("message", "agentMessage", ""):
+            role = str(item.get("role") or "user")
             if role == "developer":
                 role = "system"
             content = item.get("content", item.get("text", ""))
@@ -355,7 +351,7 @@ def normalize_responses_request(data: dict[str, Any]) -> dict[str, Any]:
             "mcp_call",
         }:
             call_id, name, args, sig, metadata = _tool_call(item)
-            if metadata:
+            if metadata is not None:
                 mcp_metadata[name] = metadata
             if call_id:
                 function_names[call_id] = name
@@ -366,20 +362,19 @@ def normalize_responses_request(data: dict[str, Any]) -> dict[str, Any]:
                 fc["thought_signature"] = sig
             messages.append({"role": "assistant", "function_call": fc})
 
-            # MCP call items can carry their own completed output/error.
             if typ == "mcp_call" and (item.get("output") is not None or item.get("error") is not None):
-                result = item.get("output")
-                if result is None:
-                    result = {"error": item.get("error")}
-                if isinstance(result, (dict, list)):
-                    result = json.dumps(result, ensure_ascii=False)
+                result_value: Any = item.get("output")
+                if result_value is None:
+                    result_value = {"error": item.get("error")}
+                if isinstance(result_value, (dict, list)):
+                    result_value = json.dumps(result_value, ensure_ascii=False)
                 messages.append(
                     {
                         "role": "tool",
                         "tool_call_id": call_id,
                         "name": name,
                         "thought_signature": sig,
-                        "content": str(result or ""),
+                        "content": str(result_value or ""),
                     }
                 )
             continue
@@ -394,8 +389,8 @@ def normalize_responses_request(data: dict[str, Any]) -> dict[str, Any]:
             "apply_patch_call_output",
             "tool",
         }:
-            call_id = item.get("call_id") or item.get("id") or ""
-            name = item.get("name") or function_names.get(call_id, "tool")
+            call_id = str(item.get("call_id") or item.get("id") or "")
+            name = str(item.get("name") or function_names.get(call_id, "tool"))
             output = item.get("output", item.get("content", item.get("stdout", "")))
             if typ in ("local_shell_call_output", "shell_call_output") and not output:
                 output = item.get("stderr", "")
@@ -412,17 +407,7 @@ def normalize_responses_request(data: dict[str, Any]) -> dict[str, Any]:
             )
             continue
 
-        if typ in {
-            "mcp_approval_request",
-            "mcp_approval_response",
-            "item_reference",
-            "tool_search_call",
-            "tool_search_output",
-            "additional_tools",
-        }:
-            dropped_types.append(str(typ))
-            continue
-        dropped_types.append(str(typ))
+        dropped_types.append(typ)
 
     gemini_tools = normalize_tools(original_tools)
     gemini_tools.extend(mcp_declarations)
