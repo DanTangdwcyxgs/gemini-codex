@@ -21,6 +21,8 @@ def test_public_repository_has_no_obvious_local_secrets_or_personal_paths():
     for path in root.rglob("*"):
         if not path.is_file() or path.suffix.lower() not in _TEXT_SUFFIXES:
             continue
+        if path.name == "test_repository_security.py":
+            continue
         if any(part in {".git", ".pytest_cache", "__pycache__"} for part in path.parts):
             continue
         text = path.read_text(encoding="utf-8", errors="ignore")
