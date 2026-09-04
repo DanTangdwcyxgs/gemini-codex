@@ -1,6 +1,6 @@
 # Gemini Codex
 
-A small local proxy that lets the current Codex CLI use Gemini through the OpenAI Responses API, while keeping DeepSeek available through the same endpoint.
+A local OpenAI Responses-compatible proxy for running Gemini 3.x Flash from the current Codex CLI, with an optional DeepSeek Responses pass-through.
 
 ## Architecture
 
@@ -16,18 +16,30 @@ Codex CLI
    `-- gemini-*   --> Google Gemini native GenerateContent SSE
 ```
 
-The proxy routes by model name, so changing the Codex model changes the upstream provider without modifying Codex itself.
+The proxy routes by model name. Codex itself does not need to be patched.
+
+## Gemini 3.x compatibility
+
+The adapter handles the important differences between Codex/OpenAI Responses and Gemini native GenerateContent:
+
+- public Gemini SSE uses top-level `candidates` and `usageMetadata`
+- Gemini 3.x reasoning uses `thinkingLevel`
+- `thoughtsTokenCount` is mapped to Responses reasoning usage
+- Gemini `thoughtSignature` is preserved across function-call turns
+- function-call `name`, `id`, and `call_id` survive the round trip
+- Responses `output_index` values remain stable across reasoning, tool, and message items
+- tool schemas are normalized before being sent to Gemini
 
 ## Models
 
-Default model list:
+Default list:
 
 - `deepseek-v4-flash`
 - `deepseek-v4-pro`
 - `gemini-3.8-flash`
 - `gemini-flash-latest`
 
-Set `CODEX_PROXY_MODELS` to override the list.
+Override with `CODEX_PROXY_MODELS`.
 
 ## Environment
 
@@ -36,9 +48,10 @@ Gemini:
 ```text
 CODEX_PROXY_GEMINI_API_KEY=...
 CODEX_PROXY_GEMINI_THINKING_LEVEL=medium
+CODEX_PROXY_COMPACTION_MODEL=gemini-3.8-flash
 ```
 
-DeepSeek:
+DeepSeek pass-through:
 
 ```text
 CODEX_PROXY_DEEPSEEK_API_KEY=...
@@ -53,11 +66,31 @@ CODEX_PROXY_HOST=127.0.0.1
 CODEX_PROXY_PORT=8765
 ```
 
-## Current compatibility work
+## Windows
 
-Gemini 3.x support includes native `thinkingLevel`, thought-signature preservation, top-level public SSE parsing, usage mapping, function calls, function results, and stable Responses output indexes.
+Store the Gemini key outside Git, for example:
 
-DeepSeek is passed through in its native Responses API format. DeepSeek's current API is stateless for Responses, so the client must provide the conversation history needed for each request.
+```text
+geminikey\geminiapikey.txt
+```
+
+Then start the proxy:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\proxy_start.ps1
+```
+
+The script reads the key, sets the environment variable for the current proxy process, and never writes the key to the repository.
+
+## Codex profile
+
+Copy `codex_gemini_profile.toml.example` into `%USERPROFILE%\.codex\config.toml` while keeping the existing DeepSeek configuration intact.
+
+Then use:
+
+```text
+codex --profile gemini
+```
 
 ## Testing
 
@@ -65,4 +98,6 @@ DeepSeek is passed through in its native Responses API format. DeepSeek's curren
 python -m pytest -q
 ```
 
-The test suite covers Gemini response parsing, Gemini 3.x request construction, tool-call metadata, multi-turn normalization, and DeepSeek/Gemini routing.
+CI runs the same pytest suite on Python 3.13.
+
+For the final real-machine acceptance test, see `docs/E2E_CHECKLIST.md`.
