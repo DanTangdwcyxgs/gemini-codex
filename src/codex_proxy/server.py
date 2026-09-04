@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
@@ -26,6 +27,13 @@ def provider_key_for_model(model: str) -> str:
 def provider_for_model(model: str):
     provider_key = provider_key_for_model(model)
     return _DEEPSEEK_PROVIDER if provider_key == "deepseek" else _GEMINI_PROVIDER
+
+
+def has_compaction_trigger(data: dict[str, Any]) -> bool:
+    return any(
+        isinstance(item, dict) and item.get("type") == "compaction_trigger"
+        for item in data.get("input") or []
+    )
 
 
 def _compaction_text(message: dict[str, Any]) -> str:
@@ -89,6 +97,11 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
                 self._handle_compact(normalized)
                 return
 
+            if has_compaction_trigger(data):
+                normalized = normalize_responses_request(data)
+                self._handle_compact_v2(normalized, model)
+                return
+
             provider_key = provider_key_for_model(model)
             provider = _DEEPSEEK_PROVIDER if provider_key == "deepseek" else _GEMINI_PROVIDER
             if provider_key == "deepseek":
@@ -102,7 +115,7 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
         except Exception as exc:
             self._json(400, {"error": {"message": str(exc), "type": "invalid_request_error"}})
 
-    def _handle_compact(self, data: dict[str, Any]) -> None:
+    def _compact_with_gemini(self, data: dict[str, Any]) -> str:
         api_key = _GEMINI_PROVIDER.auth.get_api_key()
         model = config.compaction_model
         instruction = (
@@ -152,14 +165,81 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
             for part in (candidate.get("content") or {}).get("parts", []):
                 if isinstance(part, dict) and part.get("text") and not part.get("thought"):
                     texts.append(part["text"])
+        return "".join(texts)
 
-        summary = "".join(texts)
+    def _handle_compact(self, data: dict[str, Any]) -> None:
+        summary = self._compact_with_gemini(data)
         self._json(
             200,
             {
                 "object": "response",
                 "status": "completed",
                 "output": [{"type": "compaction", "encrypted_content": encode_proxy_compaction(summary)}],
+            },
+        )
+
+    def _handle_compact_v2(self, data: dict[str, Any], requested_model: str) -> None:
+        summary = self._compact_with_gemini(data)
+        encoded = encode_proxy_compaction(summary)
+        created_ts = int(time.time())
+        response_id = f"resp_compact_{created_ts}"
+        item = {
+            "id": f"cmp_{created_ts}",
+            "type": "compaction",
+            "status": "completed",
+            "encrypted_content": encoded,
+        }
+
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Connection", "keep-alive")
+        self.end_headers()
+
+        def emit(event_type: str, payload: dict[str, Any]) -> None:
+            event = {
+                "id": f"evt_{created_ts}_{event_type}",
+                "object": "response.event",
+                "type": event_type,
+                "created_at": created_ts,
+                **payload,
+            }
+            self.wfile.write(
+                f"event: {event_type}\ndata: {json.dumps(event, ensure_ascii=False)}\n\n".encode()
+            )
+            self.wfile.flush()
+
+        emit(
+            "response.created",
+            {
+                "response": {
+                    "id": response_id,
+                    "object": "response",
+                    "model": requested_model,
+                    "status": "in_progress",
+                    "output": [],
+                }
+            },
+        )
+        emit(
+            "response.output_item.added",
+            {"response_id": response_id, "output_index": 0, "item": item},
+        )
+        emit(
+            "response.output_item.done",
+            {"response_id": response_id, "output_index": 0, "item": item},
+        )
+        emit(
+            "response.completed",
+            {
+                "response": {
+                    "id": response_id,
+                    "object": "response",
+                    "status": "completed",
+                    "model": requested_model,
+                    "created_at": created_ts,
+                    "output": [item],
+                    "usage": {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0},
+                }
             },
         )
 
