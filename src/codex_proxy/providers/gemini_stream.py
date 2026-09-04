@@ -141,15 +141,13 @@ def stream_responses_loop(
                         if not item_type:
                             item_type = "local_shell_call" if name in _SHELL_NAMES else "function_call"
 
+                        signature = part.get("thoughtSignature") or part.get("thought_signature")
                         item: dict[str, Any] = {
                             "id": call_id,
                             "type": item_type,
                             "status": "completed",
-                            "name": name,
-                            "arguments": json.dumps(raw_args, ensure_ascii=False),
                             "call_id": call_id,
                         }
-                        signature = part.get("thoughtSignature") or part.get("thought_signature")
                         if signature:
                             item["thought_signature"] = signature
 
@@ -170,6 +168,14 @@ def stream_responses_loop(
                                 if args.get(key) is not None:
                                     exec_action[key] = args[key]
                             item["action"] = exec_action
+                        elif item_type == "apply_patch_call":
+                            operation = raw_args.get("operation", raw_args) if isinstance(raw_args, dict) else raw_args
+                            if not isinstance(operation, dict):
+                                raise ValueError("apply_patch_call arguments must be an object")
+                            item["operation"] = operation
+                        else:
+                            item["name"] = name
+                            item["arguments"] = json.dumps(raw_args, ensure_ascii=False)
 
                         idx = next_output_index
                         next_output_index += 1
